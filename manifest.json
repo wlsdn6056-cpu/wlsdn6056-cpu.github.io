@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "PlayBall AI - 유소년 야구 자세·구속 분석",
+  "short_name": "PlayBall AI",
+  "description": "찍어둔 타격·투구 영상을 폰 안에서 분석해 부상 위험 자세, 구속, 투구 수와 휴식일을 알려줘요.",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EDF0F3",
+  "theme_color": "#C62F3B",
+  "categories": ["sports", "health", "fitness"],
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
