@@ -454,10 +454,10 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
       <h3>지표가 뜻하는 것</h3>
       <dl>
         <dt>관절 부하 지수</dt><dd>동작마다 부상과 관련된 자세(타격은 몸통 기울기, 투구는 팔꿈치·몸통·무릎·보폭)가 권장 범위를 얼마나 벗어났는지 0~100%로 합친 값이에요. 25% 미만 양호, 50% 미만 관찰, 그 이상은 주의예요.</dd>
-        <dt>몸통 측방 기울기</dt><dd>몸이 옆으로 기운 정도예요. 12° 이하를 권장해요. 많이 기울면 허리와 어깨 부담이 커져요.</dd>
+        <dt>몸통 측방 기울기</dt><dd>몸이 옆으로 기운 정도예요. 타격은 12° 이하, 투구는 30° 이하를 권장해요(투수는 글러브 쪽으로 어느 정도 기우는 게 자연스러워요). 많이 기울면 허리와 어깨 부담이 커져요.</dd>
         <dt>앞무릎 각도 (투구)</dt><dd>앞발을 딛은 뒤 무릎 각도예요. 125° 이상을 권장해요. 너무 굽으면 하체가 버티지 못해 팔에 부담이 가요.</dd>
         <dt>팔꿈치 높이 (투구)</dt><dd>던질 때 어깨선 대비 팔꿈치 높이예요. 어깨선보다 많이 낮으면 팔꿈치 안쪽 부담(리틀리그 엘보)이 커져요.</dd>
-        <dt>보폭 (투구)</dt><dd>키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 옆에서 찍은 영상에서만 재요.</dd>
+        <dt>보폭 (투구)</dt><dd>키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 던지는 방향과 직각으로(옆에서) 찍은 영상에서만 재고, 정면·비스듬한 영상은 측정 불가로 표시해요.</dd>
         <dt>구속 (추정)</dt><dd>공이 손을 떠난 순간과 미트에 꽂히는 소리 사이의 시간으로 계산한 평균 속도예요. 스피드건보다 5~10% 낮게 나와요.</dd>
         <dt>측정 신뢰도</dt><dd>선수 크기, 관절이 보인 정도, 선수를 놓친 비율, 촬영 각도로 계산해요. 낮음이면 판정을 보류해요.</dd>
       </dl>
@@ -503,7 +503,8 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
 /* ===== 분석 엔진 (PC 버전 v5와 같은 규칙, 시간(초) 기준) ===== */
 const CFG={kpConf:0.3,minPoseConf:0.3,viewFrontMin:0.65,viewSideMax:0.40,speedStart:1.2,speedEnd:0.7,speedPeakMin:2.5,
   endHoldS:0.25,maxSwingS:2.5,hintMove:1.5,cooldownS:0.6,issueHoldS:0.1,minSwings:5,scanHz:15};
-const LIMITS={trunk_tilt:[12,25],elbow_drop:[-0.05,-0.35],knee_flex:[125,95],stride_low:[70,50],stride_high:[110,130]};
+const LIMITS={trunk_tilt:[12,25],trunk_tilt_p:[30,40],elbow_drop:[-0.05,-0.35],knee_flex:[125,95],stride_low:[70,50],stride_high:[110,130]};
+const tiltLim=mode=>mode==="PITCHING"?LIMITS.trunk_tilt_p:LIMITS.trunk_tilt;
 const WEIGHTS={BATTING:{trunk_tilt:1},PITCHING:{elbow_drop:.4,trunk_tilt:.25,knee_flex:.2,stride:.15}};
 const COMP_LABEL={trunk_tilt:"몸통기울기",knee_flex:"앞무릎",elbow_drop:"팔꿈치높이",stride:"보폭"};
 const TIPS={
@@ -542,7 +543,7 @@ class KPFilter{
 
 class Analyzer{
   constructor(mode,hand){this.mode=mode;this.hand=hand;this.swings=[];this.hints=[];this.requireBall=false;this.practice=0;this.lastHit=null;this.filter=new KPFilter();this.softReset()}
-  softReset(){this.mv=[];this.filter.reset();this.refHs=[];this.viewEma=null;this.prevWr={};this.headRef=null;this.rec=null;this.cooldownUntil=-1}
+  softReset(){this.mv=[];this.filter.reset();this.refHs=[];this.bodyHs=[];this.viewEma=null;this.prevWr={};this.headRef=null;this.rec=null;this.cooldownUntil=-1}
   metrics(kp,valid,box,t){
     if(![5,6,11,12].every(i=>valid[i]))return null;
     const midSh=[(kp[5][0]+kp[6][0])/2,(kp[5][1]+kp[6][1])/2],midHip=[(kp[11][0]+kp[12][0])/2,(kp[11][1]+kp[12][1])/2];
@@ -556,7 +557,13 @@ class Analyzer{
     const elbowH=ok(s.sh,s.el)?(kp[s.sh][1]-kp[s.el][1])/torso:null;
     const tilt=view!=="side"?Math.abs(Math.atan2(midSh[0]-midHip[0],midHip[1]-midSh[1])*180/Math.PI):null;
     const knee=ok(l.hip,l.kn,l.an)?angle3(kp[l.hip],kp[l.kn],kp[l.an]):null;
-    const stride=(view==="side"&&ok(15,16))?Math.hypot(kp[15][0]-kp[16][0],kp[15][1]-kp[16][1])/refH*100:null;
+    /* 키 추정: 팔을 머리 위로 들면 박스가 커지므로, 몸통+다리 관절 길이로 선 키를 추정한다(어깨~발목 ≈ 키의 77%) */
+    const legs=[[11,13,15],[12,14,16]].filter(ids=>ok(...ids)).map(([h,k,a])=>Math.hypot(kp[h][0]-kp[k][0],kp[h][1]-kp[k][1])+Math.hypot(kp[k][0]-kp[a][0],kp[k][1]-kp[a][1]));
+    if(legs.length){this.bodyHs.push((torso+Math.max(...legs))/.77);if(this.bodyHs.length>150)this.bodyHs.shift()}
+    const bodyH=this.bodyHs.length>=5?pct(this.bodyHs,90):refH;
+    /* 보폭: 두 발이 화면에서 거의 수평으로 벌어졌을 때만(옆에서 찍은 영상). 앞뒤(카메라 쪽)로 벌어지면 짧게 보여 재지 않는다 */
+    let stride=null;if(ok(15,16)){const dx=Math.abs(kp[15][0]-kp[16][0]),dy=Math.abs(kp[15][1]-kp[16][1]);if(dy<=.45*dx)stride=Math.hypot(dx,dy)/bodyH*100}
+    const wrX=ok(s.wr)?kp[s.wr][0]/bodyH:null;
     const nose=valid[0]?kp[0]:null;
     const headSway=(nose&&this.headRef)?Math.hypot(nose[0]-this.headRef[0],nose[1]-this.headRef[1])/torso:null;
     let speed=0,arm=0;
@@ -565,13 +572,13 @@ class Analyzer{
         this.prevWr[j]=[kp[j][0],kp[j][1],t]}
       else delete this.prevWr[j];
     }
-    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose};
+    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose,wrX};
   }
   severities(m,rec,late){
-    const sv={};if(m.tilt!=null)sv.trunk_tilt=severity(m.tilt,...LIMITS.trunk_tilt);
+    const sv={};if(m.tilt!=null)sv.trunk_tilt=severity(m.tilt,...tiltLim(this.mode));
     if(late){if(m.knee!=null&&this.mode==="PITCHING")sv.knee_flex=severity(m.knee,...LIMITS.knee_flex);
       if(this.mode==="PITCHING"){if(m.elbowH!=null)sv.elbow_drop=severity(m.elbowH,...LIMITS.elbow_drop);
-        const sm=rec.ext.stride_max;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high))}}
+        const sm=rec.sideOK?rec.ext.stride_max:null;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high))}}
     return sv;
   }
   score(sv){const w=Object.entries(WEIGHTS[this.mode]).filter(([k])=>k in sv);if(!w.length)return[null,{}];
@@ -594,7 +601,9 @@ class Analyzer{
       if(sp>=CFG.speedStart&&t>=this.cooldownUntil)this.rec={mode:this.mode,start:t,last:t,peakSpeed:sp,peakT:t,lowFrom:null,snap:null,scoreMax:0,ext:{},hold:{},flags:new Set(),thumb:null,thumbDue:true,confSum:0,confN:0};
       else{if(sp<CFG.speedStart*.6&&m.nose)this.headRef=this.headRef?[.9*this.headRef[0]+.1*m.nose[0],.9*this.headRef[1]+.1*m.nose[1]]:m.nose.slice();return out}
     }
-    const r=this.rec;r.last=t;r.confSum+=out.poseConf;r.confN++;if(hint!=null){r.hintT=hint;r.byAudio=true}
+    const r=this.rec;r.last=t;r.confSum+=out.poseConf;r.confN++;
+    /* 옆에서 찍었는지: 던지는 손이 화면에서 좌우로 키의 70% 이상 지나가면 옆 촬영(정면 촬영은 손이 위아래로 움직임) */
+    if(m.wrX!=null){r.wxMin=Math.min(r.wxMin??m.wrX,m.wrX);r.wxMax=Math.max(r.wxMax??m.wrX,m.wrX);if(r.wxMax-r.wxMin>=.7)r.sideOK=true}if(hint!=null){r.hintT=hint;r.byAudio=true}
     for(const[k,v,f]of[["tilt_max",m.tilt,Math.max],["knee_min",m.knee,Math.min],["stride_max",m.stride,Math.max],["head_max",m.headSway,Math.max],["elbow_h_min",m.elbowH,Math.min]])
       if(v!=null)r.ext[k]=k in r.ext?f(r.ext[k],v):v;
     /* 공 소리로 잡은 스윙은 소리가 난 순간(콘택트)을 대표 장면으로 고정 */
@@ -613,6 +622,7 @@ class Analyzer{
   }
   finalize(){
     const r=this.rec;this.rec=null;if(!r)return;
+    if(!r.sideOK)delete r.ext.stride_max;
     if(r.peakSpeed<CFG.speedPeakMin||r.last-r.start<.2)return;
     /* 공이 있을 때만: 휘두른 순간 앞뒤로 공 소리(타격음·미트 소리)가 없으면 연습 스윙으로 보고 뺀다 */
     if(this.requireBall&&this.mode==="BATTING"&&!r.byAudio&&!this.hints.some(tc=>tc>=r.peakT-.35&&tc<=r.peakT+.6)){this.practice++;return}
@@ -986,7 +996,7 @@ function renderResult(complete){
   const M=S.med,L=LIMITS,rows=[];
   const dot=sv=>sv==null?"":`<span class="dot" style="background:var(--${sv<.25?"good":sv<.5?"watch":"alert"})"></span>`;
   if(state.mode==="PITCHING")rows.push(["팔꿈치 높이(어깨 대비)",M.elbowH==null?null:`${M.elbowH>=0?"+":""}${Math.round(M.elbowH*100)}%`,`≥ ${L.elbow_drop[0]*100}%`,M.elbowH==null?null:severity(M.elbowH,...L.elbow_drop)]);
-  rows.push([`몸통 측방 기울기(${state.mode==="BATTING"?"콘택트":"릴리스"})`,M.tilt==null?null:`${Math.round(M.tilt)}°`,`≤ ${L.trunk_tilt[0]}°`,M.tilt==null?null:severity(M.tilt,...L.trunk_tilt)]);
+  rows.push([`몸통 측방 기울기(${state.mode==="BATTING"?"콘택트":"릴리스"})`,M.tilt==null?null:`${Math.round(M.tilt)}°`,`≤ ${tiltLim(state.mode)[0]}°`,M.tilt==null?null:severity(M.tilt,...tiltLim(state.mode))]);
   if(state.mode==="PITCHING")rows.push(["앞무릎 각도",M.knee==null?null:`${Math.round(M.knee)}°`,`≥ ${L.knee_flex[0]}°`,M.knee==null?null:severity(M.knee,...L.knee_flex)]);
   else rows.push(["앞무릎 각도(코칭 참고)",M.knee==null?null:`${Math.round(M.knee)}°`,"참고용",null]);
   if(state.mode==="PITCHING")rows.push(["보폭(신장 대비)",M.stride==null?null:`${Math.round(M.stride)}%`,`${L.stride_low[0]}~${L.stride_high[0]}%`,M.stride==null?null:Math.max(severity(M.stride,...L.stride_low),severity(M.stride,...L.stride_high))]);
@@ -1109,11 +1119,11 @@ function guidePage(S){
   const items=[
     ["측정 신뢰도","선수가 화면에 얼마나 크게 찍혔는지, 관절이 얼마나 또렷하게 보였는지, 선수를 놓친 장면이 얼마나 적은지, 촬영 각도로 계산한 점수예요. '낮음'이면 판정을 보류해요."],
     ["관절 부하 지수","동작마다 부상과 관련된 자세(타격은 몸통 기울기, 투구는 팔꿈치·몸통·무릎·보폭)가 권장 범위를 얼마나 벗어났는지 0~100%로 합친 값이에요. 25% 미만 양호, 50% 미만 관찰, 그 이상은 주의예요."],
-    ["몸통 측방 기울기","몸이 옆으로 기운 정도예요. 12° 이하를 권장해요. 많이 기울면 허리와 어깨에 부담이 커져요."],
+    ["몸통 측방 기울기","몸이 옆으로 기운 정도예요. 타격은 12° 이하, 투구는 30° 이하를 권장해요(투수는 글러브 쪽으로 어느 정도 기우는 게 자연스러워요). 많이 기울면 허리와 어깨에 부담이 커져요."],
     ["앞무릎 각도 (투구)","앞발을 딛은 뒤 무릎 각도예요. 125° 이상을 권장해요. 너무 굽히면 하체가 못 버티고 무릎 부담이 커져요."],
   ];
   if(state.mode==="PITCHING"){items.push(["팔꿈치 높이","던질 때 어깨선 대비 팔꿈치 높이예요. 어깨선보다 많이 낮으면 팔꿈치 안쪽 부담(리틀리그 엘보)이 커져요."]);
-    items.push(["보폭","키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 옆에서 찍은 영상에서만 재요."]);
+    items.push(["보폭","키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 던지는 방향과 직각으로(옆에서) 찍은 영상에서만 재고, 정면·비스듬한 영상은 측정 불가로 표시해요."]);
     if(+state.dist>0)items.push(["구속(추정)",`공이 손을 떠나는 순간(투구 동작)과 미트에 꽂히는 소리 사이의 시간으로 계산한 평균 속도예요. 투구판~홈 ${state.dist}m 기준이에요. 스피드건(손을 떠나는 순간 속도)보다 5~10% 낮게 나오고, 일반 영상에서 오차는 ±5% 안팎이에요.`])}
   else items.push(["뒷팔꿈치·머리 흔들림","코칭 참고용 지표예요. 부상 판정에는 들어가지 않아요."]);
   let y=230;
@@ -1778,9 +1788,9 @@ const COACH={
       goodT:v=>`앞발을 딛은 뒤 앞다리가 잘 버텨요 (${Math.round(v)}°).`,
       why:v=>`공을 놓을 때 앞무릎이 ${Math.round(v)}°로 많이 굽었어요. 앞다리가 무너지면 힘이 빠져 팔로 던지게 돼요.`,
       drills:["앞발을 딛고 무릎 각도를 유지한 채 2초 버티는 착지 정지 드릴을 해보세요.","한 발 스쿼트와 런지로 앞다리 힘을 길러주세요."]},
-    {k:"tilt",name:"몸통 기울기",title:"몸통 균형 잡기",fmt:v=>`${Math.round(v)}°`,get:s=>s.snap.tilt,dir:-1,good:8,ok:12,
-      goodT:v=>`공을 놓을 때 몸통이 곧게 서 있어요 (${Math.round(v)}°).`,
-      why:v=>`공을 놓을 때 몸통이 옆으로 ${Math.round(v)}° 기울었어요. 많이 기울면 어깨와 허리에 부담이 커져요.`,
+    {k:"tilt",name:"몸통 기울기",title:"몸통 균형 잡기",fmt:v=>`${Math.round(v)}°`,get:s=>s.snap.tilt,dir:-1,good:25,ok:30,
+      goodT:v=>`공을 놓을 때 몸통 기울기가 알맞아요 (${Math.round(v)}°).`,
+      why:v=>`공을 놓을 때 몸통이 글러브 쪽으로 ${Math.round(v)}° 기울었어요. 투수는 어느 정도 기우는 게 자연스럽지만, 30°를 넘으면 어깨와 팔꿈치에 부담이 커져요.`,
       drills:["포수를 정면으로 보고 머리를 몸 중심 위에 둔 채 섀도 피칭을 해보세요.","팔로스루 끝에서 균형을 잡고 2초 멈추는 연습을 하세요."]},
   ],
 };
