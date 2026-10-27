@@ -43,8 +43,47 @@
 })();
 </script>
 <title>PlayBall AI</title>
+<style id="splash-css">
+#splash{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;color:#fff;
+  background:radial-gradient(120% 80% at 50% 30%,#D9434E 0%,#B42B37 55%,#8C1C27 100%);
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR","Malgun Gothic",sans-serif;
+  padding:env(safe-area-inset-top,0px) 24px env(safe-area-inset-bottom,0px);transition:opacity .45s ease,visibility .45s;text-align:center}
+#splash.out{opacity:0;visibility:hidden}
+#splash .sp-stage{position:relative;width:132px;height:170px;display:flex;justify-content:center}
+#splash .sp-ball{width:112px;height:112px;position:absolute;top:0;filter:drop-shadow(0 10px 18px rgba(60,0,8,.35));animation:spBob 1.6s cubic-bezier(.45,0,.55,1) infinite}
+#splash .sp-seam{transform-origin:0 0;animation:spSpin 1.6s linear infinite}
+#splash .sp-shadow{position:absolute;bottom:14px;width:78px;height:12px;border-radius:50%;background:rgba(50,0,6,.32);animation:spShadow 1.6s cubic-bezier(.45,0,.55,1) infinite}
+#splash h1.sp-title{margin:6px 0 0;font-size:2.1rem;font-weight:800;letter-spacing:-.02em;line-height:1.1;color:#fff;font-family:inherit}
+#splash .sp-sub{margin-top:10px;font-size:1rem;opacity:.88}
+#splash .sp-foot{position:absolute;left:0;right:0;bottom:calc(36px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;gap:12px}
+#splash .sp-bar{width:140px;height:4px;border-radius:999px;background:rgba(255,255,255,.25);overflow:hidden;position:relative}
+#splash .sp-bar i{position:absolute;top:0;bottom:0;width:40%;border-radius:999px;background:#fff;animation:spLoad 1.2s ease-in-out infinite}
+#splash .sp-msg{font-size:.86rem;opacity:.9;min-height:1.3em}
+#splash .sp-by{font-size:.76rem;opacity:.7}
+@keyframes spBob{0%,100%{transform:translateY(0)}50%{transform:translateY(34px)}}
+@keyframes spShadow{0%,100%{transform:scale(.7);opacity:.55}50%{transform:scale(1);opacity:1}}
+@keyframes spSpin{to{transform:rotate(360deg)}}
+@keyframes spLoad{0%{left:-40%}100%{left:100%}}
+@media (prefers-reduced-motion:reduce){#splash .sp-ball,#splash .sp-seam,#splash .sp-shadow,#splash .sp-bar i{animation:none}#splash .sp-bar i{left:30%}}
+</style>
 </head>
 <body>
+<div id="splash" role="status" aria-live="polite">
+  <div class="sp-stage"><svg class="sp-ball" viewBox="-100 -100 200 200" aria-hidden="true"><circle r="92" fill="#fff"/><g class="sp-seam"><path d="M-52-74C-20-40-12-16-12 0S-20 40-52 74M52-74C20-40 12-16 12 0S20 40 52 74" fill="none" stroke="#C62F3B" stroke-width="6" stroke-linecap="round"/><g stroke="#C62F3B" stroke-width="4.5" stroke-linecap="round"><line x1="43.3" y1="-54.7" x2="30.7" y2="-58.5"/><line x1="30.2" y1="-35.4" x2="16.2" y2="-37.2"/><line x1="23.0" y1="-19.6" x2="7.8" y2="-18.7"/><line x1="20.2" y1="-7.2" x2="4.3" y2="-2.8"/><line x1="20.7" y1="5.0" x2="5.0" y2="13.8"/><line x1="24.8" y1="18.5" x2="10.0" y2="30.6"/><line x1="33.8" y1="35.4" x2="20.3" y2="50.0"/><line x1="49.2" y1="55.9" x2="37.0" y2="72.3"/><line x1="-43.3" y1="-54.7" x2="-30.7" y2="-58.5"/><line x1="-30.2" y1="-35.4" x2="-16.2" y2="-37.2"/><line x1="-23.0" y1="-19.6" x2="-7.8" y2="-18.7"/><line x1="-20.2" y1="-7.2" x2="-4.3" y2="-2.8"/><line x1="-20.7" y1="5.0" x2="-5.0" y2="13.8"/><line x1="-24.8" y1="18.5" x2="-10.0" y2="30.6"/><line x1="-33.8" y1="35.4" x2="-20.3" y2="50.0"/><line x1="-49.2" y1="55.9" x2="-37.0" y2="72.3"/></g></g></svg><div class="sp-shadow"></div></div>
+  <h1 class="sp-title">PlayBall AI</h1>
+  <div class="sp-sub">우리 아이 야구, 폰으로 바로 점검</div>
+  <div class="sp-foot"><div class="sp-bar"><i></i></div><div class="sp-msg" id="spMsg">앱을 여는 중…</div><div class="sp-by">아빠와 아이가 함께 만든 야구 앱</div></div>
+</div>
+<script>
+/* 첫 화면(스플래시): AI가 준비되면 사라진다. 최소 1.2초 보여주고, 아무리 늦어도 12초 뒤엔 앱을 연다 */
+(function(){const t0=Date.now(),sp=document.getElementById("splash"),msg=document.getElementById("spMsg");let done=false;
+  const t1=setTimeout(()=>{if(!done)msg.textContent="AI 코치를 깨우는 중…"},900);
+  const t2=setTimeout(()=>{if(!done)msg.textContent="처음 한 번은 AI를 내려받느라 조금 걸려요"},3500);
+  window.hideSplash=function(){if(done)return;done=true;clearTimeout(t1);clearTimeout(t2);
+    setTimeout(()=>{sp.classList.add("out");setTimeout(()=>sp.remove(),500)},Math.max(0,1200-(Date.now()-t0)))};
+  setTimeout(window.hideSplash,12000);})();
+</script>
+
 <style>
 /* Layout: 한 손으로 쓰는 단일 컬럼 (최대 560px), 화면 단계별 전환 — 홈 → 선수 선택 → 분석 → 결과 */
 :root{
@@ -718,6 +757,7 @@ async function loadModel(){
     $("homeErr").hidden=false;$("homeErr").textContent="AI 모델을 불러오지 못했어요. 인터넷 연결을 확인하고 페이지를 새로고침해 주세요.";}
 }
 const modelP=window.tf?loadModel():(setStatus("AI 불러오기 실패","err"),Promise.resolve());
+modelP.finally(()=>window.hideSplash&&window.hideSplash());
 /* 인트로·자막 화면처럼 사람이 없는 장면을 건너뛰고, 선수가 처음 나오는 장면을 찾는다 */
 async function autoFind(){
   await modelP;if(!model)return 0;
