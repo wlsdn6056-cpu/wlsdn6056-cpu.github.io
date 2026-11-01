@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1018" media="(prefers-color-scheme: dark)">
+<meta name="description" content="유소년 야구 경기 기록지: 볼카운트, 타격 결과, 이닝별 투수와 투구수, 시즌 성적">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="야구 기록지">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>야구 기록지</title>
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<style>
+/* Layout: native-feeling phone app — sticky app bar, bottom nav (home/players/settings), game screen with thumb-zone pitch pad, bottom sheets, full-screen scoreboard */
+:root{
+  --bg:#f2f4f7; --surface:#ffffff; --surface2:#e8ecf1; --ink:#121b2d; --muted:#5c677a; --line:#dbe0e8;
+  --brand:#123524; --brand2:#1c4733; --brand-fg:#eef3ec; --lamp:#ffc642;
+  --seam:#c8303f; --seam-soft:#fbe6e8;
+  --ball:#2c8a53; --strike:#c07605; --out:#cf2a35; --on-sem:#ffffff;
+  --scrim:rgba(10,15,25,.45); --warn-soft:#fff1d6; --snack:#121b2d; --shadow:0 8px 28px rgba(16,24,40,.14);
+  --f:system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0b1018; --surface:#141b27; --surface2:#1d2634; --ink:#e7ecf3; --muted:#949fb2; --line:#273143;
+  --brand:#0c2418; --brand2:#18402c; --brand-fg:#e4ebe1; --lamp:#ffcc55;
+  --seam:#ff5f6d; --seam-soft:#3a1a21;
+  --ball:#4cc27c; --strike:#f0a83a; --out:#ff6b74; --on-sem:#0b1018;
+  --scrim:rgba(0,0,0,.6); --warn-soft:#3b2d12; --snack:#2b3648; --shadow:0 8px 28px rgba(0,0,0,.45); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b1018; --surface:#141b27; --surface2:#1d2634; --ink:#e7ecf3; --muted:#949fb2; --line:#273143;
+  --brand:#0c2418; --brand2:#18402c; --brand-fg:#e4ebe1; --lamp:#ffcc55;
+  --seam:#ff5f6d; --seam-soft:#3a1a21;
+  --ball:#4cc27c; --strike:#f0a83a; --out:#ff6b74; --on-sem:#0b1018;
+  --scrim:rgba(0,0,0,.6); --warn-soft:#3b2d12; --snack:#2b3648; --shadow:0 8px 28px rgba(0,0,0,.45); color-scheme:dark}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0;
+  -webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
+body.lock{overflow:hidden}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+button,input,select,textarea{font-family:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--seam);outline-offset:2px}
+svg{flex:none}
+#root{max-width:600px;margin:0 auto}
+.page{display:flex;flex-direction:column;gap:14px;padding-block:4px 112px}
+.page.pad-space{padding-bottom:calc(120px + env(safe-area-inset-bottom,0px))}
+
+/* app bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:8;background:var(--bg);padding-bottom:6px}
+.appbar{display:flex;align-items:center;gap:2px;min-height:58px;margin:0 -8px}
+.appbar .ttl{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25;padding-inline:8px}
+.appbar .ttl b{font-size:20px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.appbar .ttl small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib{width:44px;height:44px;border:0;background:transparent;color:var(--ink);border-radius:12px;display:grid;place-items:center}
+.ib svg{width:22px;height:22px}
+.ib:active{background:var(--surface2)}
+.ib:disabled{opacity:.3}
+.tabs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--surface2);border-radius:12px;padding:3px;gap:3px}
+.tabs button{border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:600;padding:8px 0;border-radius:9px}
+.tabs button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+
+/* bottom nav */
+.bnav{position:fixed;left:0;right:0;bottom:0;z-index:9;background:var(--surface);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(3,1fr);
+  padding:6px max(16px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.bnav button{border:0;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;font-weight:600;padding:4px 0}
+.bnav button svg{width:24px;height:24px}
+.bnav button span{line-height:1}
+.bnav button[aria-current="page"]{color:var(--ink)}
+.bnav button[aria-current="page"] svg{color:var(--seam)}
+
+.fab{position:fixed;z-index:9;right:max(18px,calc(env(safe-area-inset-right,0px) + 18px));bottom:calc(84px + env(safe-area-inset-bottom,0px));
+  display:flex;align-items:center;gap:8px;border:0;border-radius:18px;padding:15px 20px 15px 16px;background:var(--seam);color:#fff;font-size:15px;font-weight:800;box-shadow:var(--shadow)}
+.fab svg{width:22px;height:22px}
+@media (min-width:640px){.fab{right:calc(50% - 300px + 18px)}}
+
+/* generic */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.h2{font-size:13px;font-weight:700;color:var(--muted);margin:6px 2px -4px;letter-spacing:.02em}
+.eyebrow{font-size:11.5px;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.hint{font-size:12.5px;color:var(--muted);margin:0;line-height:1.55}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.sec{font-size:15px;font-weight:800;margin:0;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.chipbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:8px 13px;font-size:13.5px;font-weight:600;white-space:nowrap}
+.chipbtn:active{background:var(--surface2)}
+.btn{border:1px solid var(--ink);background:var(--ink);color:var(--bg);border-radius:12px;padding:13px 16px;font-size:15px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn svg{width:18px;height:18px}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.danger{background:var(--out);border-color:var(--out);color:var(--on-sem)}
+.btn.block{width:100%}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.banner{background:var(--seam-soft);color:var(--seam);border-radius:14px;padding:12px 14px;font-size:13.5px;display:flex;justify-content:space-between;gap:10px;align-items:center;font-weight:600}
+.banner .chipbtn{flex:none}
+.banner.warn{background:var(--warn-soft);color:var(--ink)}
+.empty{text-align:center;padding:28px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--muted)}
+.empty b{color:var(--ink);font-size:16px}
+.empty svg{width:56px;height:56px}
+
+label.f{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--muted);font-weight:600;min-width:0}
+input,select,textarea{font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 11px;width:100%;min-width:0}
+select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 15px) 52%,calc(100% - 10px) 52%;background-size:5px 5px;background-repeat:no-repeat;padding-right:26px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid2 .full{grid-column:1/-1}
+
+/* home */
+.season{display:grid;grid-template-columns:repeat(4,1fr);background:var(--brand);color:var(--brand-fg);border-radius:16px;padding:14px 6px}
+.season div{display:flex;flex-direction:column;align-items:center;gap:2px}
+.season b{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.season span{font-size:11.5px;opacity:.75}
+.season div+div{border-left:1px solid rgba(255,255,255,.12)}
+.live-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:14px;text-align:left;color:var(--ink);width:100%}
+.live-card .info{flex:1;min-width:0}
+.live-card .info b{display:block;font-size:16px}
+.live-card .score{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.live-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--seam)}
+.live-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--seam);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.grow{display:grid;grid-template-columns:52px 1fr auto 34px;gap:10px;align-items:center;width:100%;border:0;background:transparent;color:var(--ink);text-align:left;padding:13px 14px;border-bottom:1px solid var(--line)}
+.grow:last-child{border-bottom:0}
+.grow .d{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.2}
+.grow .o{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grow .s{font-variant-numeric:tabular-nums;font-weight:700}
+.wl{width:30px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:13px;font-weight:800}
+.wl.W{background:var(--ball);color:var(--on-sem)} .wl.L{background:var(--surface2);color:var(--muted)} .wl.D{background:var(--surface2);color:var(--ink)}
+
+/* scoreboard */
+.board{background:var(--brand);color:var(--brand-fg);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.bhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bhead .inn{font-size:19px;font-weight:800}
+.mode{font-size:12px;font-weight:800;padding:3px 9px;border-radius:999px;margin-left:8px;vertical-align:2px}
+.mode.atk{background:var(--lamp);color:#2a1d00}
+.mode.dfn{background:var(--brand-fg);color:var(--brand)}
+.ls{overflow-x:auto}
+.ls table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+.ls th,.ls td{padding:5px 3px;text-align:center;border-bottom:1px solid rgba(255,255,255,.1);min-width:24px}
+.ls tr:last-child td{border-bottom:0}
+.ls th{font-weight:600;font-size:11px;opacity:.65}
+.ls td.tm{text-align:left;font-weight:800;white-space:nowrap;padding-right:10px;max-width:110px;overflow:hidden;text-overflow:ellipsis}
+.ls td.r{color:var(--lamp);font-weight:800;font-size:16px}
+.ls td.now{background:rgba(255,198,66,.16);border-radius:4px}
+.ls tr.bat td.tm::before{content:"▶ ";color:var(--lamp);font-size:10px}
+
+/* live */
+.sit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center;padding:12px 14px}
+.dia{width:100%;max-width:170px;height:auto;justify-self:center}
+.dia .base rect{fill:var(--surface);stroke:var(--muted);stroke-width:2}
+.dia .base.on rect{fill:var(--seam);stroke:var(--seam)}
+.dia .base .hit{fill:transparent}
+.dia .base[data-base]{cursor:pointer}
+.dia .path{fill:none;stroke:var(--line);stroke-width:2}
+.dia .home{fill:var(--ink)}
+.cnt{display:flex;flex-direction:column;gap:9px}
+.cnt>div{display:flex;align-items:center;gap:7px}
+.cnt>div>span{width:16px;font-weight:800;font-size:15px}
+.dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);display:inline-block;background:var(--surface)}
+.dot.b.on{background:var(--ball);border-color:var(--ball)}
+.dot.s.on{background:var(--strike);border-color:var(--strike)}
+.dot.o.on{background:var(--out);border-color:var(--out)}
+.who{gap:6px}
+.who .name{font-size:24px;font-weight:800;line-height:1.2;word-break:keep-all}
+.who .name.opp{color:var(--muted);font-size:20px}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap;font-weight:600}
+.chip.hit{border-color:var(--ball);color:var(--ball)}
+.chip.on{border-color:var(--strike);color:var(--strike)}
+.nextup{font-size:13px;color:var(--muted)}
+.nextup b{color:var(--ink);font-weight:600}
+.pit{display:flex;flex-direction:column;gap:8px}
+.pit .top2{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
+.pit .nm{font-size:18px;font-weight:800}
+.pit .num{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;white-space:nowrap}
+.pit .num small{font-size:13px;color:var(--muted);font-weight:600}
+.meter{height:10px;background:var(--surface2);border-radius:5px;overflow:hidden;position:relative}
+.meter i{display:block;height:100%;background:var(--ball);border-radius:5px;transition:width .2s}
+.meter.warn i{background:var(--strike)} .meter.bad i{background:var(--out)}
+.pill{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:999px;background:var(--seam-soft);color:var(--seam);vertical-align:3px}
+.quick{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin:0 -2px;scrollbar-width:none}
+.quick::-webkit-scrollbar{display:none}
+.pad{position:fixed;left:0;right:0;bottom:0;z-index:9;background:var(--surface);border-top:1px solid var(--line);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.pad .in{max-width:600px;margin:0 auto;display:grid;grid-template-columns:1fr 1.4fr 1fr 1fr;gap:8px}
+.pb{border:0;border-radius:14px;min-height:62px;font-size:clamp(14px,4.2vw,17px);font-weight:800;color:var(--on-sem);white-space:nowrap;padding:0 4px;letter-spacing:-.02em}
+.pb.ball{background:var(--ball)} .pb.strike{background:var(--strike)} .pb.foul{background:var(--muted)} .pb.play{background:var(--ink);color:var(--bg)}
+.pb:active,.rb:active,.chipbtn:active,.btn:active{transform:scale(.97)}
+.final{align-items:center;text-align:center}
+.final .big{font-size:44px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+
+/* pitcher order strip */
+.plan-strip{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.ps-h{display:flex;justify-content:space-between;align-items:center}
+.chipbtn.sm{padding:4px 10px;font-size:12.5px;display:inline-flex;align-items:center;gap:4px}
+.chipbtn.sm svg{width:14px;height:14px}
+.ps-list{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 -2px;padding:0 2px 2px}
+.ps-list::-webkit-scrollbar{display:none}
+.ps{flex:none;min-width:72px;border:1px solid var(--line);border-radius:10px;padding:6px 9px;display:flex;flex-direction:column;line-height:1.3;background:var(--surface)}
+.ps span{font-size:11px;color:var(--muted);font-weight:700}
+.ps b{font-size:14px;white-space:nowrap}
+.ps small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ps.now{border-color:var(--seam);background:var(--seam-soft)}
+.ps.now span{color:var(--seam)}
+.ps.done{opacity:.55}
+/* lineup */
+.lu{display:flex;flex-direction:column;gap:8px}
+.lrow{display:grid;grid-template-columns:22px minmax(0,1fr) 78px 34px 34px 30px;gap:6px;align-items:center}
+.lrow .o{font-weight:800;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+.lrow.cur .o{color:var(--seam)}
+.sb34{width:34px;height:40px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:9px;display:grid;place-items:center;padding:0}
+.sb34 svg{width:18px;height:18px}
+.sb34:disabled{opacity:.3}
+.xb{border:0;background:transparent;color:var(--muted);padding:0;display:grid;place-items:center;height:40px}
+.xb svg{width:18px;height:18px}
+.prow{display:grid;grid-template-columns:44px minmax(0,1fr) 82px;gap:8px;align-items:center}
+.prow .il{font-weight:800;font-variant-numeric:tabular-nums}
+.prow .pc{font-size:12.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.prow.now{background:var(--seam-soft);border-radius:10px;padding:5px 6px;margin:0 -6px}
+.dup{color:var(--strike);font-weight:700}
+
+/* tables */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table.sb{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+table.sb th,table.sb td{border-bottom:1px solid var(--line);padding:8px 7px;text-align:center;white-space:nowrap}
+table.sb th{font-size:11.5px;color:var(--muted);font-weight:600;background:var(--bg);position:sticky;top:0}
+table.sb td.nm,table.sb th.nm{text-align:left;font-weight:700;position:sticky;left:0;background:var(--surface)}
+table.sb th.nm{background:var(--bg)}
+table.sb td.c{font-size:12.5px;min-width:40px}
+table.sb .hit{color:var(--ball);font-weight:800} table.sb .on{color:var(--strike);font-weight:700} table.sb .out{color:var(--muted)}
+table.sb tr:last-child td{border-bottom:0}
+table.sb tr.tot td{font-weight:800;background:var(--bg)}
+table.sb small{color:var(--muted);font-weight:500}
+
+/* roster */
+.rrow{display:grid;grid-template-columns:minmax(0,1fr) 84px 52px 30px;gap:8px;align-items:center}
+.rrow .avg{font-size:13px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.addrow{display:grid;grid-template-columns:minmax(0,1fr) 84px auto;gap:8px}
+
+/* share */
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;background:var(--surface2);border-radius:11px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--muted);font-size:13.5px;font-weight:600;padding:8px 0;border-radius:8px}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+textarea{min-height:240px;font:12.5px/1.55 ui-monospace,Menlo,"Roboto Mono",monospace;white-space:pre;overflow:auto}
+
+/* sheets */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:50;animation:fade .15s}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:51;margin:0 auto;max-width:600px;background:var(--surface);border-radius:22px 22px 0 0;
+  max-height:88vh;overflow:auto;display:flex;flex-direction:column;gap:14px;animation:up .2s ease-out;
+  padding:8px max(18px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px))}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:2px auto 0}
+.sh-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.sh-h b{font-size:19px;font-weight:800}
+.sh-h span{color:var(--muted);font-size:13.5px;text-align:right}
+.grp{display:flex;flex-direction:column;gap:7px}
+.rg{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.rb{border:1.5px solid var(--line);background:var(--surface);color:var(--ink);border-radius:12px;min-height:54px;font-size:15px;font-weight:700;word-break:keep-all;padding:4px}
+.rb.hit{border-color:var(--ball);color:var(--ball)}
+.rb.on{border-color:var(--strike);color:var(--strike)}
+.menu{display:flex;flex-direction:column}
+.menu button{border:0;background:transparent;color:var(--ink);text-align:left;font-size:16px;font-weight:600;padding:15px 4px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+.menu button:last-child{border-bottom:0}
+.menu button svg{width:20px;height:20px;color:var(--muted)}
+.menu button.danger{color:var(--out)}
+.menu button.danger svg{color:var(--out)}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pick button{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:12px;padding:12px;text-align:left;font-size:15px;font-weight:700;display:flex;justify-content:space-between;gap:6px}
+.pick button small{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
+@keyframes up{from{transform:translateY(40px);opacity:.4}}
+@keyframes fade{from{opacity:0}}
+
+.snack{position:fixed;left:50%;transform:translateX(-50%);z-index:60;bottom:calc(96px + env(safe-area-inset-bottom,0px));
+  width:min(560px,calc(100% - 32px));background:var(--snack);color:#f4f6f9;border-radius:14px;padding:12px 8px 12px 16px;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:14.5px;font-weight:600;box-shadow:var(--shadow);animation:up .18s ease-out}
+.snack button{border:0;background:transparent;color:#ffc642;font-weight:800;font-size:14.5px;padding:6px 10px;white-space:nowrap}
+
+/* full-screen scoreboard */
+.tv{position:fixed;inset:0;z-index:40;background:#06140d;color:#f1f5ee;display:flex;flex-direction:column;
+  padding:max(14px,env(safe-area-inset-top,0px)) max(18px,env(safe-area-inset-right,0px)) max(14px,env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px));gap:2vh;overflow:hidden}
+.tv-top{display:flex;justify-content:space-between;align-items:center}
+.tv-inn{font-size:clamp(22px,5vmin,52px);font-weight:900;color:#ffc642}
+.tv-x{width:44px;height:44px;border:0;border-radius:12px;background:rgba(255,255,255,.08);color:#f1f5ee;display:grid;place-items:center}
+.tv-x svg{width:22px;height:22px}
+.tv-main{flex:1;display:grid;grid-template-columns:1fr;gap:2.5vh;min-height:0;align-content:center}
+.tv-score{display:flex;flex-direction:column;gap:1vh}
+.tv-team{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:2px solid rgba(255,255,255,.1);padding-bottom:.8vh}
+.tv-team .n{font-size:clamp(22px,6vmin,72px);font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tv-team .n.bat::before{content:"▶ ";color:#ffc642;font-size:.55em;vertical-align:.25em}
+.tv-team .r{font-size:clamp(48px,15vmin,180px);font-weight:900;color:#ffc642;font-variant-numeric:tabular-nums;line-height:1}
+.tv .ls table{font-size:clamp(13px,2.6vmin,28px)}
+.tv .ls td.r{font-size:1.15em}
+.tv-side{display:grid;grid-template-columns:auto 1fr;gap:3vmin;align-items:center}
+.tv-cnt{display:flex;flex-direction:column;gap:1.4vmin}
+.tv-cnt>div{display:flex;align-items:center;gap:1.4vmin;font-weight:900;font-size:clamp(18px,4vmin,44px)}
+.tv-cnt>div>span{width:1.1em}
+.tv .dot{width:clamp(18px,4.4vmin,48px);height:clamp(18px,4.4vmin,48px);border:3px solid #2d4a3b;background:transparent}
+.tv .dot.b.on{background:#4cc27c;border-color:#4cc27c}.tv .dot.s.on{background:#ffc642;border-color:#ffc642}.tv .dot.o.on{background:#ff5d6b;border-color:#ff5d6b}
+.tv .dia{max-width:min(30vmin,240px)}
+.tv .dia .base rect{fill:#0f241a;stroke:#5b7a69}
+.tv .dia .base.on rect{fill:#ffc642;stroke:#ffc642}
+.tv .dia .path{stroke:#2d4a3b}.tv .dia .home{fill:#f1f5ee}
+.tv-who{font-size:clamp(16px,3.6vmin,40px);font-weight:800;line-height:1.35}
+.tv-who small{display:block;font-size:.6em;opacity:.65;font-weight:700}
+.tv-pad{display:grid;grid-template-columns:1fr 1.4fr 1fr 1fr 48px;gap:8px}
+.tv-pad button{border:0;border-radius:10px;padding:12px 0;font-weight:800;font-size:clamp(13px,3.6vw,16px);color:#06140d;white-space:nowrap;display:grid;place-items:center}
+.tv-pad button svg{width:20px;height:20px}
+.tv-pad .b1{background:#4cc27c}.tv-pad .b2{background:#ffc642}.tv-pad .b3{background:#9fb0a6}.tv-pad .b4{background:#f1f5ee}.tv-pad .b5{background:rgba(255,255,255,.12);color:#f1f5ee}
+.tv-hide{border:0;background:transparent;color:rgba(241,245,238,.55);font-size:12.5px;padding:4px;align-self:center}
+@media (orientation:landscape) and (min-width:560px){
+  .tv-main{grid-template-columns:1.25fr 1fr;align-items:center}
+  .tv-side{grid-template-columns:1fr;justify-items:start}
+  .tv-side .tv-row{display:flex;gap:4vmin;align-items:center}
+}
+@media (max-width:370px){.lrow{grid-template-columns:20px minmax(0,1fr) 66px 30px 30px 26px;gap:5px}.rg{grid-template-columns:repeat(3,1fr)}.pb{font-size:15px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+<div id="snack" class="snack" hidden role="status" aria-live="polite"><span id="snackMsg"></span><button id="snackBtn" type="button">되돌리기</button></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+
+<script>
+'use strict';
+const KEY='youthScorebook.v3', OLD='youthScorebook.v2', APPVER='1.0.0';
+const POS=['','P','C','1B','2B','3B','SS','LF','CF','RF','DH','EH'];
+const POSK={'':'-',P:'투수',C:'포수','1B':'1루',SS:'유격','2B':'2루','3B':'3루',LF:'좌익',CF:'중견',RF:'우익',DH:'지명',EH:'추가'};
+const RES={
+  '1B':{l:'안타',s:'1B',hit:1,base:1,ab:1,g:'hit'},
+  '2B':{l:'2루타',s:'2B',hit:1,base:2,ab:1,g:'hit'},
+  '3B':{l:'3루타',s:'3B',hit:1,base:3,ab:1,g:'hit'},
+  'HR':{l:'홈런',s:'HR',hit:1,base:4,ab:1,g:'hit'},
+  'BB':{l:'볼넷',s:'BB',walk:1,g:'on'},
+  'HBP':{l:'사구',s:'HBP',walk:1,g:'on'},
+  'E':{l:'실책 출루',s:'E',base:1,ab:1,err:1,g:'on'},
+  'FC':{l:'야수선택',s:'FC',out:1,ab:1,fc:1,g:'on'},
+  'K':{l:'삼진',s:'K',out:1,ab:1,k:1,g:'out'},
+  'GO':{l:'땅볼',s:'땅',out:1,ab:1,g:'out'},
+  'FO':{l:'뜬공',s:'뜬',out:1,ab:1,g:'out'},
+  'LO':{l:'직선타',s:'직',out:1,ab:1,g:'out'},
+  'DP':{l:'병살',s:'병',out:2,ab:1,g:'out'},
+  'SAC':{l:'희생타',s:'희',out:1,sac:1,g:'out'},
+};
+const GROUPS=[['안타',['1B','2B','3B','HR']],['출루',['BB','HBP','E','FC']],['아웃',['K','GO','FO','LO','DP','SAC']]];
+const SEQ={B:'볼',S:'스',F:'파',X:'타격',H:'사구'};
+const ic=p=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const I={
+  home:ic('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>'),
+  users:ic('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2c2.2.7 3.5 2.8 3.5 5.8"/>'),
+  gear:ic('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
+  back:ic('<path d="M15 5l-7 7 7 7"/>'),
+  undo:ic('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+  tv:ic('<rect x="2.5" y="4.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 17.5V21"/>'),
+  more:ic('<circle cx="12" cy="5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="19" r="1.3" fill="currentColor"/>'),
+  plus:ic('<path d="M12 5v14M5 12h14"/>'),
+  x:ic('<path d="M6 6l12 12M18 6 6 18"/>'),
+  up:ic('<path d="m6 15 6-6 6 6"/>'),
+  down:ic('<path d="m6 9 6 6 6-6"/>'),
+  copy:ic('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/>'),
+  share:ic('<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/>'),
+  edit:ic('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
+  flag:ic('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
+  play:ic('<path d="M7 4v16l13-8z"/>'),
+  trash:ic('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
+  ball:ic('<circle cx="12" cy="12" r="9"/><path d="M7.5 4.2c2 2.2 2 13.4 0 15.6M16.5 4.2c-2 2.2-2 13.4 0 15.6"/>'),
+  save:ic('<path d="M12 3v12M7 10l5 5 5-5M4 19h16"/>'),
+  load:ic('<path d="M12 21V9M7 14l5-5 5 5M4 5h16"/>'),
+};
+
+/* ---------- data ---------- */
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let D=null;
+function defaults(){return {v:3,team:'우리 팀',innings:6,limit:75,roster:[],games:[],example:false}}
+function seedRoster(){return [['김도윤','SS'],['이준서','CF'],['박시우','P'],['최하준','C'],['정예준','1B'],['강지호','3B'],['윤은우','LF'],['조서진','2B'],['임건우','RF']].map(([name,pos])=>({id:uid(),name,pos}))}
+const blankApp=(inn,pid,name)=>({inn,pid:pid||'',name:name||'',pc:0,st:0,bl:0,bf:0,k:0,bb:0,h:0,r:0,outs:0});
+function newGame(o={}){return {id:uid(),created:Date.now(),date:o.date||today(),place:o.place||'',opp:o.opp||'상대팀',first:o.first!==false,
+  innings:+o.innings||D.innings||6,limit:+o.limit||D.limit||75,status:'live',lineup:[],idx:0,plan:[],apps:[],
+  inning:1,top:true,balls:0,strikes:0,outs:0,bases:[0,0,0],line:{us:[],opp:[]},hits:{us:0,opp:0},errors:{us:0,opp:0},pa:[],plays:[],cur:''}}
+function migrate(o){
+  D.team=o.info?.us||'우리 팀';D.innings=+o.info?.innings||6;D.limit=+o.info?.limit||75;
+  const by={};
+  D.roster=(o.lineup||[]).map(p=>{const r={id:uid(),name:p.name,pos:p.pos||''};by[p.name]=r.id;return r});
+  const pidOf=n=>{if(!n||n==='투수 미정')return '';if(!by[n]){const r={id:uid(),name:n,pos:'P'};D.roster.push(r);by[n]=r.id}return by[n]};
+  const plan=(o.plan||[]).map(pidOf);
+  const g=newGame({opp:o.info?.opp,date:o.info?.date,place:o.info?.place,first:!!o.info?.first});
+  g.lineup=(o.lineup||[]).map(p=>({pid:by[p.name],pos:p.pos||''}));g.plan=plan;
+  if(!(o.pa||[]).length&&!(o.apps||[]).some(a=>a.pc))return;
+  Object.assign(g,{idx:o.idx||0,inning:o.inning||1,top:o.top!==false,balls:o.balls||0,strikes:o.strikes||0,outs:o.outs||0,bases:o.bases||[0,0,0],
+    line:o.line||{us:[],opp:[]},hits:o.hits||{us:0,opp:0},errors:o.errors||{us:0,opp:0},plays:o.plays||[],cur:o.cur||''});
+  g.pa=(o.pa||[]).map(x=>({pid:g.lineup[x.i]?.pid||'',inn:x.inn,c:x.c,rbi:0}));
+  g.apps=(o.apps||[]).map(a=>Object.assign(blankApp(a.inn,pidOf(a.name),a.name),a,{pid:pidOf(a.name)}));
+  D.games.push(g);
+}
+function load(){
+  try{D=JSON.parse(localStorage.getItem(KEY))}catch(e){D=null}
+  if(D&&D.v===3&&Array.isArray(D.games))return;
+  D=defaults();
+  let old=null;try{old=JSON.parse(localStorage.getItem(OLD))}catch(e){}
+  if(old&&old.lineup&&!old.example){try{migrate(old)}catch(e){D=defaults()}}
+  if(!D.roster.length){D.roster=seedRoster();D.team='청룡 리틀';D.example=true}
+  save();
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}}
+const players=()=>D.roster.filter(p=>!p.gone);
+const P=pid=>D.roster.find(p=>p.id===pid);
+const pname=pid=>P(pid)?.name||'선수 없음';
+const appName=a=>a.pid?pname(a.pid):(a.name||'투수 미정');
+const G=()=>D.games.find(g=>g.id===R.gid);
+const tot=(g,t)=>g.line[t].reduce((a,b)=>a+b,0);
+const outcome=g=>{const a=tot(g,'us'),b=tot(g,'opp');return a>b?'W':a<b?'L':'D'};
+const WL={W:'승',L:'패',D:'무'};
+
+/* ---------- game logic ---------- */
+const bat=g=>(g.top===!!g.first)?'us':'opp';
+const defending=g=>bat(g)==='opp';
+const planFor=(g,inn)=>g.plan[inn-1]||'';
+function curApp(g){
+  for(let k=g.apps.length-1;k>=0;k--)if(g.apps[k].inn===g.inning)return g.apps[k];
+  const a=blankApp(g.inning,planFor(g,g.inning));g.apps.push(a);return a;
+}
+const kidPitches=(g,pid)=>g.apps.filter(a=>a.pid===pid).reduce((s,a)=>s+a.pc,0);
+const nextDefInning=g=>defending(g)?g.inning+1:(g.first?g.inning:g.inning+1);
+function curBatter(g){if(!g.lineup.length)return null;const i=g.idx%g.lineup.length;return {i,...g.lineup[i]}}
+function addRuns(g,t,n){if(!n)return;const L=g.line[t];while(L.length<g.inning)L.push(0);L[g.inning-1]+=n;if(t==='opp'&&defending(g))curApp(g).r+=n}
+function startHalf(g){const L=g.line[bat(g)];while(L.length<g.inning)L.push(0);if(defending(g))curApp(g)}
+function endHalf(g){g.outs=0;g.balls=0;g.strikes=0;g.bases=[0,0,0];g.cur='';if(g.top)g.top=false;else{g.top=true;g.inning++}startHalf(g);
+  return defending(g)?`${g.inning}회 수비 · 투수 ${appName(curApp(g))}`:`${g.inning}회 공격 시작`}
+function note(g,text){g.plays.push({inn:g.inning,top:g.top,side:bat(g),note:text,score:[tot(g,'us'),tot(g,'opp')]})}
+
+function result(g,code,pitches){
+  const r=RES[code],o=bat(g),d=o==='us'?'opp':'us',b=g.bases.slice();
+  const play={inn:g.inning,top:g.top,side:o,seq:g.cur,c:code};let msg,pa=null;
+  if(o==='us'){
+    if(!g.lineup.length)return false;
+    const slot=g.idx%g.lineup.length,pid=g.lineup[slot].pid;
+    pa={pid,inn:g.inning,c:code,rbi:0};g.pa.push(pa);g.idx++;
+    play.slot=slot+1;play.who=pname(pid);msg=`${pname(pid)} ${r.l}`;
+  }else{
+    const p=curApp(g);p.pc+=pitches;p.bf++;if(r.k)p.k++;if(r.walk)p.bb++;if(r.hit)p.h++;
+    if(r.walk)p.bl+=pitches;else p.st+=pitches;
+    play.who=`상대 ${p.bf}번째 타자`;play.pitcher=appName(p);msg=`상대 타자 ${r.l}`;
+  }
+  let runs=0;
+  if(r.walk){if(b[0]){if(b[1]){if(b[2])runs++;b[2]=1}b[1]=1}b[0]=1}
+  else if(r.base){const n=r.base,nb=[0,0,0];for(let k=2;k>=0;k--)if(b[k]){const t=k+n;if(t>=3)runs++;else nb[t]=1}if(n===4)runs++;else nb[n-1]=1;b.splice(0,3,...nb)}
+  else if(r.fc){b[0]=1}
+  else if(r.sac){if(b[2])runs++;b[2]=b[1];b[1]=b[0];b[0]=0}
+  else if(code==='DP'){b[0]=0}
+  const before=g.outs;g.outs+=r.out||0;
+  if(o==='opp')curApp(g).outs+=Math.min(3,g.outs)-before;
+  if(g.outs>=3)runs=0;
+  g.bases=b;addRuns(g,o,runs);
+  if(pa&&!r.err&&code!=='DP')pa.rbi=runs;
+  if(r.hit)g.hits[o]++;if(r.err)g.errors[d]++;
+  g.balls=0;g.strikes=0;
+  if(runs)msg+=` · ${runs}점`;
+  play.runs=runs;play.outs=Math.min(3,g.outs);play.score=[tot(g,'us'),tot(g,'opp')];
+  g.plays.push(play);g.cur='';
+  if(g.outs>=3)msg+=` · ${endHalf(g)}`;
+  return msg;
+}
+
+/* ---------- undo ---------- */
+const hist=[];
+function snap(g){hist.push({id:g.id,s:JSON.stringify(g)});if(hist.length>80)hist.shift()}
+const canUndo=g=>hist.some(h=>h.id===g.id);
+function undo(){const g=G();if(!g)return;for(let k=hist.length-1;k>=0;k--)if(hist[k].id===g.id){const s=hist.splice(k,1)[0];const i=D.games.findIndex(x=>x.id===g.id);D.games[i]=JSON.parse(s.s);save();render();snack('되돌렸어요');buzz(8);return}}
+
+/* ---------- routing (Android back button aware) ---------- */
+let R={screen:'home',gid:null,tab:'live',prep:'lineup',ptab:'roster',exp:'sum',sheet:null,sd:null,tv:false,tvPad:true};
+const M=[];let ign=0;
+function pushM(k){try{history.pushState({m:k},'');M.push(k)}catch(e){}}
+function swapM(k){if(!M.length)return pushM(k);try{history.replaceState({m:k},'');M[M.length-1]=k}catch(e){}}
+function popM(n){n=Math.min(n||1,M.length);if(!n)return;M.length-=n;ign++;try{history.go(-n)}catch(e){ign--}}
+const topM=()=>M[M.length-1];
+function setR(p){if(p.screen&&p.screen!==R.screen)hideSnack();Object.assign(R,p);render()}
+function openGame(id,tab){hideSnack();Object.assign(R,{screen:'game',gid:id,tab,sheet:null,sd:null,tv:false});pushM('game');render();scrollTo(0,0)}
+function goHome(){hideSnack();const n=M.length;Object.assign(R,{screen:'home',gid:null,sheet:null,sd:null,tv:false});leaveFull();popM(n);render();scrollTo(0,0)}
+function openSheet(name,sd){hideSnack();const had=!!R.sheet;R.sheet=name;R.sd=sd||null;if(!had)pushM('sheet');render()}
+function closeSheet(){if(!R.sheet)return;R.sheet=null;R.sd=null;if(topM()==='sheet')popM(1);render()}
+function openTv(){hideSnack();R.tv=true;R.sheet=null;pushM('tv');render();enterFull()}
+function closeTv(){if(!R.tv)return;R.tv=false;leaveFull();if(topM()==='tv')popM(1);render()}
+addEventListener('popstate',()=>{
+  if(ign){ign--;return}
+  M.pop();
+  if(R.sheet){R.sheet=null;R.sd=null}
+  else if(R.tv){R.tv=false;leaveFull()}
+  else if(R.screen==='game'){R.screen='home';R.gid=null}
+  render();
+});
+
+/* ---------- small helpers ---------- */
+function buzz(p){try{navigator.vibrate&&navigator.vibrate(p||10)}catch(e){}}
+let sT;
+function hideSnack(){clearTimeout(sT);document.getElementById('snack').hidden=true}
+function snack(msg,withUndo){const s=document.getElementById('snack');document.getElementById('snackMsg').textContent=msg;
+  document.getElementById('snackBtn').hidden=!withUndo;s.hidden=false;
+  if(R.tv){s.style.top='calc(12px + env(safe-area-inset-top,0px))';s.style.bottom='auto'}
+  else{s.style.top='auto';s.style.bottom=(R.screen==='game'&&R.tab==='live'&&G()?.status==='live')?'calc(96px + env(safe-area-inset-bottom,0px))':'calc(84px + env(safe-area-inset-bottom,0px))'}
+  clearTimeout(sT);sT=setTimeout(()=>s.hidden=true,withUndo?4000:2200)}
+document.getElementById('snackBtn').addEventListener('click',()=>{document.getElementById('snack').hidden=true;undo()});
+let wl=null;
+async function keepAwake(){try{if(!wl&&navigator.wakeLock&&document.visibilityState==='visible'){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>wl=null)}}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(R.screen==='game')keepAwake()});
+function enterFull(){try{const el=document.documentElement;if(el.requestFullscreen&&!document.fullscreenElement)el.requestFullscreen().then(()=>{try{screen.orientation&&screen.orientation.lock&&screen.orientation.lock('landscape').catch(()=>{})}catch(e){}}).catch(()=>{})}catch(e){}keepAwake()}
+function leaveFull(){try{if(document.fullscreenElement&&document.exitFullscreen)document.exitFullscreen().catch(()=>{})}catch(e){}try{screen.orientation&&screen.orientation.unlock&&screen.orientation.unlock()}catch(e){}}
+const fmtAvg=(h,ab)=>ab?(h/ab).toFixed(3).replace(/^0/,''):'-';
+const fmtIP=o=>`${Math.floor(o/3)}${o%3?` ${o%3}/3`:''}`;
+const stPct=a=>{const t=(a.st||0)+(a.bl||0);return t?Math.round((a.st||0)/t*100)+'%':'-'};
+const half=(inn,top)=>`${inn}회${top?'초':'말'}`;
+const seqText=s=>{s=(s||'').replace(/X$/,'');return s?[...s].map(c=>SEQ[c]||c).join('-'):'초구'};
+const dots=(n,max,cls)=>[...Array(max)].map((_,i)=>`<i class="dot ${cls} ${i<n?'on':''}"></i>`).join('');
+const chipCls=c=>RES[c].g==='hit'?'hit':RES[c].g==='on'?'on':'out';
+const mmdd=d=>{const m=String(d||'').split('-');return m.length===3?`${+m[1]}.${+m[2]}`:d};
+const rosterOpts=(sel,blank='선택 안 함')=>`<option value="">${blank}</option>`+D.roster.filter(p=>!p.gone||p.id===sel).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.name)}</option>`).join('');
+const posOpts=sel=>POS.map(p=>`<option value="${p}" ${p===sel?'selected':''}>${POSK[p]}</option>`).join('');
+
+/* ---------- stats ---------- */
+function batStats(){const m={};const z=()=>({g:0,pa:0,ab:0,h:0,d:0,t:0,hr:0,bb:0,hbp:0,k:0,rbi:0});
+  D.games.forEach(g=>{new Set(g.lineup.map(l=>l.pid).concat(g.pa.map(x=>x.pid))).forEach(pid=>{if(pid)(m[pid]??=z()).g++});
+    g.pa.forEach(x=>{const s=(m[x.pid]??=z()),r=RES[x.c];s.pa++;if(r.ab)s.ab++;if(r.hit)s.h++;if(x.c==='2B')s.d++;if(x.c==='3B')s.t++;if(x.c==='HR')s.hr++;if(x.c==='BB')s.bb++;if(x.c==='HBP')s.hbp++;if(r.k)s.k++;s.rbi+=x.rbi||0})});
+  return m}
+function pitStats(){const m={};const z=()=>({g:new Set(),pc:0,st:0,bl:0,outs:0,bf:0,h:0,bb:0,k:0,r:0});
+  D.games.forEach(g=>g.apps.forEach(a=>{if(!a.pid||!(a.pc||a.bf))return;const s=(m[a.pid]??=z());s.g.add(g.id);for(const k of ['pc','st','bl','outs','bf','h','bb','k','r'])s[k]+=a[k]||0}));
+  return m}
+const obp=s=>{const d=s.ab+s.bb+s.hbp;return d?((s.h+s.bb+s.hbp)/d).toFixed(3).replace(/^0/,''):'-'};
+
+/* ---------- shared pieces ---------- */
+function lineScore(g){
+  const n=Math.max(g.innings,g.inning),cols=[...Array(n)].map((_,i)=>i+1),live=g.status==='live';
+  const name={us:D.team,opp:g.opp};
+  const row=t=>{const isBat=live&&bat(g)===t;return `<tr class="${isBat?'bat':''}"><td class="tm">${esc(name[t])}</td>${cols.map(i=>{const v=g.line[t][i-1];return `<td class="${live&&i===g.inning&&isBat?'now':''}">${v===undefined?'':v}</td>`}).join('')}<td class="r">${tot(g,t)}</td><td>${g.hits[t]}</td><td>${g.errors[t]}</td></tr>`};
+  return `<div class="ls"><table><thead><tr><th></th>${cols.map(i=>`<th>${i}</th>`).join('')}<th>R</th><th>H</th><th>E</th></tr></thead><tbody>${(g.first?['us','opp']:['opp','us']).map(row).join('')}</tbody></table></div>`;
+}
+function diamond(g,interactive){
+  const base=(k,x,y)=>`<g class="base ${g.bases[k]?'on':''}" ${interactive?`data-base="${k}" role="button" tabindex="0" aria-label="${k+1}루 주자 ${g.bases[k]?'있음':'없음'}"`:''}><circle class="hit" cx="${x}" cy="${y}" r="24"/><rect x="${x-13}" y="${y-13}" width="26" height="26" rx="3" transform="rotate(45 ${x} ${y})"/></g>`;
+  return `<svg class="dia" viewBox="0 0 160 140" aria-label="주자 상황"><path class="path" d="M80 122 L136 68 L80 16 L24 68 Z"/>${base(1,80,16)}${base(0,136,68)}${base(2,24,68)}<polygon class="home" points="71,114 89,114 89,122 80,130 71,122"/></svg>`;
+}
+const appTop=(inner,tabs)=>`<div class="top"><header class="appbar">${inner}</header>${tabs||''}</div>`;
+
+/* ---------- screens ---------- */
+function vNav(){return `<nav class="bnav">${[['home','경기',I.home],['players','선수',I.users],['settings','설정',I.gear]].map(([k,l,i])=>`<button data-nav="${k}" aria-current="${R.screen===k?'page':'false'}">${i}<span>${l}</span></button>`).join('')}</nav>`}
+
+function vHome(){
+  const live=D.games.filter(g=>g.status==='live').sort((a,b)=>b.created-a.created);
+  const past=D.games.filter(g=>g.status==='final').sort((a,b)=>b.date.localeCompare(a.date)||b.created-a.created);
+  const rec={W:0,L:0,D:0};past.forEach(g=>rec[outcome(g)]++);
+  let ab=0,h=0;D.games.forEach(g=>g.pa.forEach(x=>{if(RES[x.c].ab)ab++;if(RES[x.c].hit)h++}));
+  return appTop(`<div class="ttl"><small>유소년 야구 기록지</small><b>${esc(D.team)}</b></div>`)+`
+  <main class="page">
+    ${D.example?`<div class="banner"><span>예시 선수가 들어 있어요. 선수 탭에서 우리 아이들로 바꿔 주세요.</span><button class="chipbtn" data-nav="players">선수 탭</button></div>`:''}
+    <section class="season" aria-label="시즌 성적"><div><b>${past.length}</b><span>경기</span></div><div><b>${rec.W}</b><span>승</span></div><div><b>${rec.L}</b><span>패${rec.D?` · ${rec.D}무`:''}</span></div><div><b>${fmtAvg(h,ab)}</b><span>팀 타율</span></div></section>
+    ${live.length?`<h2 class="h2">진행 중</h2>${live.map(g=>`<button class="live-card" data-open="${g.id}"><div class="info"><span class="live-dot">${g.inning}회${g.top?'초':'말'}</span><b>vs ${esc(g.opp)}</b><span class="hint">${mmdd(g.date)}${g.place?` · ${esc(g.place)}`:''}</span></div><div class="score">${tot(g,'us')} : ${tot(g,'opp')}</div></button>`).join('')}`:''}
+    <h2 class="h2">지난 경기</h2>
+    ${past.length?`<div class="list">${past.map(g=>`<button class="grow" data-open="${g.id}"><span class="d">${mmdd(g.date)}<br>${esc(g.place||'')}</span><span class="o">vs ${esc(g.opp)}</span><span class="s">${tot(g,'us')} : ${tot(g,'opp')}</span><span class="wl ${outcome(g)}">${WL[outcome(g)]}</span></button>`).join('')}</div>`
+      :`<div class="card empty">${I.ball}<b>${live.length?'끝난 경기가 여기에 쌓여요':'첫 경기를 만들어 보세요'}</b><span class="hint">오른쪽 아래 <b>새 경기</b>를 누르면 상대 팀과 공격 순서를 정하고 바로 기록을 시작할 수 있어요.</span></div>`}
+  </main>
+  <button class="fab" data-act="newGame">${I.plus}<span>새 경기</span></button>`;
+}
+
+function vPlayers(){
+  const bs=batStats(),ps=pitStats(),list=players();
+  let body='';
+  if(R.ptab==='roster'){
+    body=`<section class="card">
+      <div class="addrow"><input id="newName" placeholder="선수 이름" enterkeyhint="done" autocomplete="off"><select id="newPos" aria-label="수비 위치">${posOpts('')}</select><button class="btn" data-act="addPlayer">추가</button></div>
+      <div class="lu">${list.length?list.map(p=>`<div class="rrow"><input id="pn-${p.id}" data-pname="${p.id}" value="${esc(p.name)}" aria-label="이름"><select id="pp-${p.id}" data-ppos="${p.id}" aria-label="수비 위치">${posOpts(p.pos||'')}</select><span class="avg">${bs[p.id]?fmtAvg(bs[p.id].h,bs[p.id].ab):'-'}</span><button class="xb" data-pdel="${p.id}" aria-label="${esc(p.name)} 삭제">${I.trash}</button></div>`).join('')
+        :`<div class="empty"><b>등록된 선수가 없어요</b><span class="hint">위에서 이름을 입력하고 추가를 누르세요.</span></div>`}</div>
+      <p class="hint">명단은 모든 경기에서 함께 써요. 이름이 같은 아이가 있으면 ‘민준A’처럼 구분해 주세요. 오른쪽 숫자는 시즌 타율이에요.</p></section>`;
+  }else if(R.ptab==='bat'){
+    const rows=list.map(p=>({p,s:bs[p.id]})).filter(x=>x.s);
+    body=rows.length?`<div class="tw"><table class="sb"><thead><tr><th class="nm">이름</th><th>타율</th><th>출루율</th><th>경기</th><th>타석</th><th>타수</th><th>안타</th><th>2루타</th><th>3루타</th><th>홈런</th><th>타점</th><th>볼넷</th><th>사구</th><th>삼진</th></tr></thead><tbody>
+      ${rows.map(({p,s})=>`<tr><td class="nm">${esc(p.name)}</td><td><b>${fmtAvg(s.h,s.ab)}</b></td><td>${obp(s)}</td><td>${s.g}</td><td>${s.pa}</td><td>${s.ab}</td><td>${s.h}</td><td>${s.d}</td><td>${s.t}</td><td>${s.hr}</td><td>${s.rbi}</td><td>${s.bb}</td><td>${s.hbp}</td><td>${s.k}</td></tr>`).join('')}</tbody></table></div><p class="hint">진행 중인 경기를 포함한 모든 경기의 합계예요. 표는 옆으로 밀어서 볼 수 있어요.</p>`
+      :`<div class="card empty"><b>아직 타격 기록이 없어요</b><span class="hint">경기를 기록하면 선수별 시즌 성적이 여기에 모여요.</span></div>`;
+  }else{
+    const rows=list.map(p=>({p,s:ps[p.id]})).filter(x=>x.s);
+    body=rows.length?`<div class="tw"><table class="sb"><thead><tr><th class="nm">이름</th><th>등판</th><th>이닝</th><th>투구수</th><th>S%</th><th>상대</th><th>피안타</th><th>볼넷</th><th>삼진</th><th>실점</th></tr></thead><tbody>
+      ${rows.map(({p,s})=>`<tr><td class="nm">${esc(p.name)}</td><td>${s.g.size}</td><td>${fmtIP(s.outs)}</td><td>${s.pc}</td><td>${stPct(s)}</td><td>${s.bf}</td><td>${s.h}</td><td>${s.bb}</td><td>${s.k}</td><td>${s.r}</td></tr>`).join('')}</tbody></table></div><p class="hint">S%는 전체 투구 중 스트라이크(파울·인플레이 포함) 비율이에요.</p>`
+      :`<div class="card empty"><b>아직 투구 기록이 없어요</b><span class="hint">수비 이닝을 기록하면 아이별 투구수와 이닝이 쌓여요.</span></div>`;
+  }
+  return appTop(`<div class="ttl"><small>${esc(D.team)}</small><b>선수</b></div>`,`<div class="tabs" role="tablist">${[['roster','명단'],['bat','타격'],['pit','투구']].map(([k,l])=>`<button role="tab" data-ptab="${k}" aria-selected="${R.ptab===k}">${l}</button>`).join('')}</div>`)
+    +`<main class="page">${D.example&&R.ptab==='roster'?`<div class="banner"><span>예시 선수예요. 이름을 고치거나 지우고 우리 아이들을 추가하세요.</span><button class="chipbtn" data-act="hideEx">닫기</button></div>`:''}${body}</main>`;
+}
+
+function vSettings(){
+  return appTop(`<div class="ttl"><small>유소년 야구 기록지</small><b>설정</b></div>`)+`
+  <main class="page">
+    <section class="card"><h2 class="sec">팀</h2>
+      <label class="f">팀 이름<input id="s-team" data-set="team" value="${esc(D.team)}"></label>
+      <div class="grid2">
+        <label class="f">기본 이닝<select id="s-inn" data-set="innings">${[3,4,5,6,7,9].map(n=>`<option value="${n}" ${+D.innings===n?'selected':''}>${n}이닝</option>`).join('')}</select></label>
+        <label class="f">기본 투구수 제한<input id="s-lim" data-set="limit" inputmode="numeric" value="${esc(D.limit)}"></label>
+      </div>
+      <p class="hint">새 경기를 만들 때 쓰는 기본값이에요. 투구수 제한은 연맹·대회 규정에 맞춰 주세요. 제한 15구 전부터 노란색으로 알려 줘요.</p></section>
+    <section class="card"><h2 class="sec">백업</h2>
+      <p class="hint">기록은 이 휴대폰에만 저장돼요. 휴대폰을 바꾸거나 앱을 지우기 전에 백업 파일을 만들어 두세요.</p>
+      <div class="btns"><button class="btn ghost" data-act="backup">${I.save}백업 만들기</button><button class="btn ghost" data-act="import">${I.load}백업 불러오기</button></div></section>
+    <section class="card"><h2 class="sec">데이터</h2>
+      <button class="btn ghost block" data-act="wipeAsk" style="color:var(--out)">${I.trash}모든 기록 지우기</button></section>
+    <p class="hint" style="text-align:center">야구 기록지 ${APPVER} · 경기 ${D.games.length}개 · 선수 ${players().length}명</p>
+  </main>`;
+}
+
+function vGame(g){
+  const fin=g.status==='final';
+  const sub=fin?`${mmdd(g.date)} · 경기 종료 · ${WL[outcome(g)]}`:`${mmdd(g.date)} · ${g.inning}회${g.top?'초':'말'} 진행 중`;
+  const tabs=[['live','기록'],['prep','준비'],['sheet','기록표'],['share','공유']];
+  let body=R.tab==='prep'?vPrep(g):R.tab==='sheet'?vSheetTab(g):R.tab==='share'?vShare(g):vLive(g);
+  return appTop(`<button class="ib" data-act="back" aria-label="뒤로">${I.back}</button><div class="ttl"><b>vs ${esc(g.opp)}</b><small>${sub}</small></div>
+    <button class="ib" data-act="tv" aria-label="전광판">${I.tv}</button><button class="ib" data-act="undo" aria-label="되돌리기" ${canUndo(g)?'':'disabled'}>${I.undo}</button><button class="ib" data-sheet="more" aria-label="더보기">${I.more}</button>`,
+    `<div class="tabs" role="tablist">${tabs.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${R.tab===k}">${l}</button>`).join('')}</div>`)
+    +`<main class="page ${R.tab==='live'&&!fin?'pad-space':''}">${body}</main>`
+    +(R.tab==='live'&&!fin?`<div class="pad"><div class="in"><button class="pb ball" data-pitch="ball">볼</button><button class="pb strike" data-pitch="strike">스트라이크</button><button class="pb foul" data-pitch="foul">파울</button><button class="pb play" data-sheet="result">결과</button></div></div>`:'');
+}
+
+function planStrip(g){
+  const n=Math.max(g.innings,g.inning),curDef=g.status==='live'&&defending(g)?g.inning:0;
+  return `<div class="plan-strip"><div class="ps-h"><span class="eyebrow">투수 순서</span><button class="chipbtn sm" data-goplan="1">${I.edit}고치기</button></div>
+    <div class="ps-list">${[...Array(n)].map((_,k)=>{const inn=k+1,pid=g.plan[k],done=g.apps.some(a=>a.inn===inn&&(a.pc||a.bf));
+      return `<div class="ps ${inn===curDef?'now':''} ${done&&inn!==curDef?'done':''}"><span>${inn}회</span><b>${pid?esc(pname(pid)):'미정'}</b>${pid?`<small>${kidPitches(g,pid)}구</small>`:''}</div>`}).join('')}</div></div>`;
+}
+function pitcherBlock(g){
+  if(defending(g)){
+    const p=curApp(g),total=kidPitches(g,p.pid),lim=+g.limit||75,pct=Math.min(100,total/lim*100),mc=total>=lim?'bad':total>=lim-15?'warn':'';
+    const nxt=planFor(g,g.inning+1);
+    return `<section class="card pit">
+      <div class="top2"><div><div class="eyebrow">${g.inning}회 투수</div><span class="nm">${esc(appName(p))}</span> ${mc==='bad'?'<span class="pill">제한 도달</span>':mc==='warn'?'<span class="pill">제한 임박</span>':''}</div>
+        <div class="num">${total}<small> / ${lim}구</small></div></div>
+      <div class="meter ${mc}" role="meter" aria-valuenow="${total}" aria-valuemax="${lim}" aria-label="오늘 투구수"><i style="width:${pct}%"></i></div>
+      <span class="hint">이번 이닝 ${p.pc}구 · 상대 ${p.bf}명 · 피안타 ${p.h} · 볼넷 ${p.bb} · 삼진 ${p.k} · 실점 ${p.r}</span>
+      ${planStrip(g)}
+    </section>`;
+  }
+  const ni=nextDefInning(g),pid=planFor(g,ni);
+  return `<section class="card" style="padding:14px 16px;gap:10px"><div class="nextup">다음 수비(${ni}회) 투수 <b>${pid?esc(pname(pid)):'미정'}</b>${pid?` · 오늘 ${kidPitches(g,pid)}구`:''}</div>${planStrip(g)}</section>`;
+}
+
+function vLive(g){
+  if(g.status==='final'){
+    const o=outcome(g);
+    return `<section class="card final"><span class="eyebrow">경기 종료</span><div class="big">${tot(g,'us')} : ${tot(g,'opp')}</div><span class="wl ${o}" style="width:auto;padding:0 12px">${WL[o]}</span>
+      <span class="hint">${esc(D.team)} vs ${esc(g.opp)} · ${esc(g.date)}${g.place?` · ${esc(g.place)}`:''}</span>
+      <div class="btns" style="width:100%"><button class="btn" data-tab="sheet">기록표 보기</button><button class="btn ghost" data-tab="share">공유하기</button></div></section>
+      <section class="board">${lineScore(g)}</section>
+      <button class="btn ghost block" data-act="reopen">${I.play}경기 다시 진행</button>`;
+  }
+  const us=!defending(g),B=curBatter(g),len=g.lineup.length;
+  const mine=us&&B?g.pa.filter(x=>x.pid===B.pid):[];
+  let who;
+  if(us){
+    who=B?`<section class="card who"><div class="eyebrow">${B.i+1}번 타자${B.pos?` · ${POSK[B.pos]}`:''}</div><div class="name">${esc(pname(B.pid))}</div>
+      <div class="chips">${mine.length?mine.map(x=>`<span class="chip ${chipCls(x.c)}">${x.inn}회 ${RES[x.c].l}</span>`).join(''):'<span class="hint">오늘 첫 타석</span>'}</div>
+      ${len>1?`<div class="nextup">다음 <b>${esc(pname(g.lineup[(B.i+1)%len].pid))}</b>${len>2?` · <b>${esc(pname(g.lineup[(B.i+2)%len].pid))}</b>`:''}</div>`:''}</section>`
+      :`<section class="card empty"><b>타순이 비어 있어요</b><span class="hint">준비 탭에서 타순을 먼저 정해 주세요.</span><button class="btn" data-tab="prep">타순 정하기</button></section>`;
+  }else{
+    who=`<section class="card who"><div class="eyebrow">상대 공격</div><div class="name opp">${curApp(g).bf+1}번째 타자</div><span class="hint">결과는 우리 투수 기록으로 들어가요.</span></section>`;
+  }
+  const regDone=g.inning>g.innings;
+  return `
+    ${regDone?`<div class="banner warn"><span>정규 ${g.innings}이닝이 끝났어요. 연장이면 계속 기록하세요.</span><button class="chipbtn" data-act="endAsk">경기 종료</button></div>`:''}
+    <section class="board"><div class="bhead"><span class="inn">${g.inning}회 ${g.top?'초':'말'}<span class="mode ${us?'atk':'dfn'}">${us?'공격':'수비'}</span></span></div>${lineScore(g)}</section>
+    <section class="card sit">${diamond(g,true)}<div class="cnt"><div><span>B</span>${dots(g.balls,3,'b')}</div><div><span>S</span>${dots(g.strikes,2,'s')}</div><div><span>O</span>${dots(g.outs,2,'o')}</div></div></section>
+    ${who}
+    ${pitcherBlock(g)}
+    <div class="quick">
+      <button class="chipbtn" data-act="run+">${us?'득점':'실점'} +1</button>
+      <button class="chipbtn" data-act="run-">${us?'득점':'실점'} −1</button>
+      <button class="chipbtn" data-act="out+">아웃 +1</button>
+      ${us?'<button class="chipbtn" data-act="skip">타석 건너뛰기</button>':'<button class="chipbtn" data-sheet="relief">투수 교체</button>'}
+      <button class="chipbtn" data-act="endHalf">공수 교대</button>
+    </div>
+    <p class="hint">안타·볼넷 때 주자는 자동으로 진루해요. 도루나 견제사는 베이스를 눌러 고치고 득점·아웃 버튼으로 맞추세요.</p>`;
+}
+
+function vPrep(g){
+  const n=Math.max(g.innings,g.inning),started=g.pa.length||g.apps.some(a=>a.pc||a.bf);
+  const counts={};g.plan.slice(0,n).forEach(x=>{if(x)counts[x]=(counts[x]||0)+1});
+  const curSlot=g.lineup.length?g.idx%g.lineup.length:-1,curDef=g.status==='live'&&defending(g)?g.inning:0;
+  const seg=`<div class="seg" role="tablist">${[['lineup','타순'],['pitch','투수 순서'],['info','경기 정보']].map(([k,l])=>`<button data-prep="${k}" aria-selected="${R.prep===k}">${l}</button>`).join('')}</div>`;
+  const info=`<section class="card"><h2 class="sec">경기 정보</h2>
+    <div class="grid2">
+      <label class="f full">상대 팀<input id="g-opp" data-g="opp" value="${esc(g.opp)}"></label>
+      <label class="f">날짜<input type="date" id="g-date" data-g="date" value="${esc(g.date)}"></label>
+      <label class="f">구장<input id="g-place" data-g="place" value="${esc(g.place)}" placeholder="예: 시민구장"></label>
+      <label class="f">공격 순서<select id="g-first" data-g="first" ${started?'disabled':''}><option value="1" ${g.first?'selected':''}>우리 선공 (초)</option><option value="0" ${g.first?'':'selected'}>우리 후공 (말)</option></select></label>
+      <label class="f">정규 이닝<select id="g-inn" data-g="innings">${[3,4,5,6,7,9].map(k=>`<option value="${k}" ${+g.innings===k?'selected':''}>${k}이닝</option>`).join('')}</select></label>
+      <label class="f full">투수 1인 투구수 제한<input id="g-lim" data-g="limit" inputmode="numeric" value="${esc(g.limit)}"></label>
+    </div>${started?'<p class="hint">기록이 시작돼서 공격 순서는 바꿀 수 없어요.</p>':''}</section>`;
+  const lineup=`<section class="card"><h2 class="sec">타순 <span class="hint">${g.lineup.length}명</span></h2>
+    <div class="lu">${g.lineup.map((l,i)=>`<div class="lrow ${g.status==='live'&&i===curSlot?'cur':''}"><span class="o">${i+1}</span>
+      <select id="ls-${i}" data-lslot="${i}" aria-label="${i+1}번 타자">${rosterOpts(l.pid,'선수 선택')}</select>
+      <select id="lp-${i}" data-lpos="${i}" aria-label="${i+1}번 수비">${posOpts(l.pos||'')}</select>
+      <button class="sb34" data-mv="${i},-1" aria-label="위로" ${i===0?'disabled':''}>${I.up}</button><button class="sb34" data-mv="${i},1" aria-label="아래로" ${i===g.lineup.length-1?'disabled':''}>${I.down}</button>
+      <button class="xb" data-lrm="${i}" aria-label="${i+1}번 빼기">${I.x}</button></div>`).join('')}</div>
+    <div class="row"><button class="chipbtn" data-act="lineAdd">+ 타자 추가</button>${g.lineup.length?'':'<button class="chipbtn" data-act="lineFill">명단 전원 넣기</button>'}</div>
+    <p class="hint">빨간 번호가 다음 타자예요. 선수를 바꾸면 그 자리에 교체로 들어가고, 앞선 타석 기록은 원래 선수에게 남아요.</p></section>`;
+  const pitch=`<section class="card"><h2 class="sec">투수 순서 <span class="hint">이닝마다 자동 교체</span></h2>
+    <div class="lu">${[...Array(n)].map((_,k)=>{const inn=k+1,pid=g.plan[k]||'';return `<div class="prow ${inn===curDef?'now':''}"><span class="il">${inn}회</span>
+      <select id="pl-${inn}" data-plan="${inn}">${rosterOpts(pid)}</select><span class="pc">${pid?`${kidPitches(g,pid)}구`:''}${pid&&counts[pid]>1?` <span class="dup">${counts[pid]}회</span>`:''}</span></div>`}).join('')}</div>
+    <p class="hint">수비 이닝이 시작되면 그 이닝 투수로 자동으로 바뀌어요. 오른쪽 숫자는 그 아이의 오늘 누적 투구수예요.</p></section>`;
+  return seg+(R.prep==='pitch'?pitch:R.prep==='info'?info:lineup);
+}
+
+function vSheetTab(g){
+  const n=Math.max(g.innings,g.inning),cols=[...Array(n)].map((_,i)=>i+1);
+  const T={ab:0,h:0,rbi:0,bb:0,k:0};
+  const pids=[];g.lineup.forEach(l=>{if(l.pid&&!pids.includes(l.pid))pids.push(l.pid)});g.pa.forEach(x=>{if(!pids.includes(x.pid))pids.push(x.pid)});
+  const inLine=new Set(g.lineup.map(l=>l.pid));
+  const rows=pids.map(pid=>{const pas=g.pa.filter(x=>x.pid===pid),st={ab:0,h:0,rbi:0,bb:0,k:0};
+    pas.forEach(x=>{const r=RES[x.c];if(r.ab)st.ab++;if(r.hit)st.h++;if(r.walk)st.bb++;if(r.k)st.k++;st.rbi+=x.rbi||0});for(const k in st)T[k]+=st[k];
+    const slot=g.lineup.findIndex(l=>l.pid===pid);
+    return `<tr><td class="nm">${slot>=0?`${slot+1}. `:''}${esc(pname(pid))}${inLine.has(pid)?'':' <small>교체</small>'}</td><td>${st.ab}-${st.h}</td><td>${st.rbi}</td>${cols.map(c=>`<td class="c">${pas.filter(x=>x.inn===c).map(x=>`<span class="${chipCls(x.c)}">${RES[x.c].s}</span>`).join(' ')}</td>`).join('')}<td>${st.bb}</td><td>${st.k}</td></tr>`}).join('');
+  const apps=g.apps.filter(a=>a.bf||a.pc);
+  const pt={pc:0,st:0,bl:0,outs:0,bf:0,h:0,bb:0,k:0,r:0};apps.forEach(a=>{for(const k in pt)pt[k]+=a[k]||0});
+  return `<section class="board">${lineScore(g)}</section>
+  <section class="card" style="padding:14px 12px"><h2 class="sec" style="padding:0 4px">타격 <span class="hint">${tot(g,'us')}점</span></h2>
+    ${pids.length?`<div class="tw"><table class="sb"><thead><tr><th class="nm">타자</th><th>타수-안타</th><th>타점</th>${cols.map(c=>`<th>${c}회</th>`).join('')}<th>4사구</th><th>삼진</th></tr></thead>
+    <tbody>${rows}<tr class="tot"><td class="nm">합계</td><td>${T.ab}-${T.h}</td><td>${T.rbi}</td>${cols.map(()=>'<td></td>').join('')}<td>${T.bb}</td><td>${T.k}</td></tr></tbody></table></div>`:'<p class="hint">타순을 정하면 여기에 타자별 기록이 쌓여요.</p>'}</section>
+  <section class="card" style="padding:14px 12px"><h2 class="sec" style="padding:0 4px">투구 <span class="hint">${pt.r}실점</span></h2>
+    ${apps.length?`<div class="tw"><table class="sb"><thead><tr><th>회</th><th class="nm">투수</th><th>투구수</th><th>S%</th><th>아웃</th><th>상대</th><th>피안타</th><th>볼넷</th><th>삼진</th><th>실점</th></tr></thead>
+    <tbody>${apps.map(a=>`<tr><td>${a.inn}</td><td class="nm">${esc(appName(a))}</td><td>${a.pc}</td><td>${stPct(a)}</td><td>${a.outs||0}</td><td>${a.bf}</td><td>${a.h}</td><td>${a.bb}</td><td>${a.k}</td><td>${a.r}</td></tr>`).join('')}
+    <tr class="tot"><td></td><td class="nm">합계</td><td>${pt.pc}</td><td>${stPct(pt)}</td><td>${pt.outs}</td><td>${pt.bf}</td><td>${pt.h}</td><td>${pt.bb}</td><td>${pt.k}</td><td>${pt.r}</td></tr></tbody></table></div>`:'<p class="hint">수비 이닝이 시작되면 투수 기록이 쌓여요.</p>'}</section>
+  <p class="hint">기호: 1B·2B·3B·HR 안타 / BB 볼넷 / HBP 사구 / E 실책 / FC 야수선택 / K 삼진 / 땅·뜬·직 아웃 / 병 병살 / 희 희생타</p>`;
+}
+
+/* ---------- exports ---------- */
+function exportSum(g){
+  let s=`[${g.date}${g.place?' '+g.place:''}]\n${D.team} ${tot(g,'us')} : ${tot(g,'opp')} ${g.opp}${g.status==='final'?` (${WL[outcome(g)]})`:` (${g.inning}회 진행 중)`}\n\n`;
+  const n=Math.max(g.innings,g.inning),nm={us:D.team,opp:g.opp};
+  s+=`이닝  `+[...Array(n)].map((_,i)=>String(i+1).padStart(2)).join(' ')+`   R  H  E\n`;
+  for(const t of (g.first?['us','opp']:['opp','us']))s+=`${nm[t].slice(0,4).padEnd(4,' ')}  `+[...Array(n)].map((_,i)=>String(g.line[t][i]??'-').padStart(2)).join(' ')+`  ${String(tot(g,t)).padStart(2)} ${String(g.hits[t]).padStart(2)} ${String(g.errors[t]).padStart(2)}\n`;
+  s+=`\n■ 타자\n`;
+  g.lineup.forEach((l,i)=>{const pas=g.pa.filter(x=>x.pid===l.pid);const ab=pas.filter(x=>RES[x.c].ab).length,h=pas.filter(x=>RES[x.c].hit).length,rbi=pas.reduce((a,x)=>a+(x.rbi||0),0);
+    s+=`${i+1}. ${pname(l.pid)}${l.pos?`(${POSK[l.pos]})`:''} ${ab}타수 ${h}안타${rbi?` ${rbi}타점`:''}  ${pas.map(x=>RES[x.c].l).join(', ')}\n`});
+  s+=`\n■ 투수\n`;g.apps.filter(a=>a.bf||a.pc).forEach(a=>s+=`${a.inn}회 ${appName(a)} ${a.pc}구 · 상대 ${a.bf}명 · 피안타 ${a.h} · 볼넷 ${a.bb} · 삼진 ${a.k} · 실점 ${a.r}\n`);
+  return s;
+}
+function exportPbp(g){
+  let s=`[${g.date}${g.place?' '+g.place:''}] ${D.team} vs ${g.opp} 세부 기록\n`;let key='',n=0,cp='';
+  g.plays.forEach(p=>{const k=`${p.inn}${p.top}`;
+    if(k!==key){key=k;n=0;cp='';s+=`\n■ ${half(p.inn,p.top)} ${p.side==='us'?'공격':'수비'}\n`}
+    if(p.note){s+=`   · ${p.note}  [${p.score[0]}:${p.score[1]}]\n`;return}
+    if(p.pitcher&&p.pitcher!==cp){cp=p.pitcher;s+=`   투수: ${p.pitcher}\n`}
+    n++;s+=`${String(n).padStart(2)}. ${p.side==='us'?`${p.slot}번 ${p.who}`:p.who} — ${seqText(p.seq)} → ${RES[p.c].l}${p.runs?` (${p.runs}점)`:''}  ${p.outs}아웃 [${p.score[0]}:${p.score[1]}]\n`});
+  if(!g.plays.length)s+=`\n아직 기록된 타석이 없어요.\n`;
+  return s;
+}
+function exportTsv(g){
+  const T=(...a)=>a.join('\t')+'\n';
+  let s=T('[경기]',g.date,g.place,D.team,tot(g,'us'),g.opp,tot(g,'opp'),g.status==='final'?WL[outcome(g)]:'진행 중');
+  s+='\n'+T('[타자 기록]')+T('타순','이름','수비','타석','타수','안타','2루타','3루타','홈런','타점','볼넷','사구','삼진');
+  g.lineup.forEach((l,i)=>{const pas=g.pa.filter(x=>x.pid===l.pid),c=k=>pas.filter(x=>x.c===k).length;
+    s+=T(i+1,pname(l.pid),POSK[l.pos||''],pas.length,pas.filter(x=>RES[x.c].ab).length,pas.filter(x=>RES[x.c].hit).length,c('2B'),c('3B'),c('HR'),pas.reduce((a,x)=>a+(x.rbi||0),0),c('BB'),c('HBP'),c('K'))});
+  s+='\n'+T('[투수 기록]')+T('이닝','투수','투구수','스트라이크','볼','S%','아웃','상대타자','피안타','볼넷','삼진','실점');
+  g.apps.filter(a=>a.bf||a.pc).forEach(a=>s+=T(a.inn,appName(a),a.pc,a.st||0,a.bl||0,stPct(a),a.outs||0,a.bf,a.h,a.bb,a.k,a.r));
+  s+='\n'+T('[타석별 기록]')+T('이닝','공수','타자','투수','투구','결과','득점','아웃','우리','상대');
+  g.plays.filter(p=>!p.note).forEach(p=>s+=T(half(p.inn,p.top),p.side==='us'?'공격':'수비',p.side==='us'?`${p.slot}번 ${p.who}`:p.who,p.pitcher||'',seqText(p.seq),RES[p.c].l,p.runs,p.outs,p.score[0],p.score[1]));
+  return s;
+}
+const exportCur=g=>R.exp==='pbp'?exportPbp(g):R.exp==='tsv'?exportTsv(g):exportSum(g);
+function vShare(g){
+  const hint={sum:'단체방이나 메모에 붙여 넣기 좋은 요약이에요.',pbp:'타석마다 투구 순서와 결과, 아웃, 점수를 차례로 적어요.',tsv:'엑셀이나 구글 시트의 첫 칸에 붙여 넣으면 칸이 나뉘어 들어가요. 파일로 공유하면 CSV 파일이 만들어져요.'}[R.exp];
+  return `<section class="card">
+    <div class="seg" role="tablist">${[['sum','요약'],['pbp','세부 기록'],['tsv','엑셀용 표']].map(([k,l])=>`<button data-exp="${k}" aria-selected="${R.exp===k}">${l}</button>`).join('')}</div>
+    <textarea id="exp" readonly aria-label="내보낼 기록">${esc(exportCur(g))}</textarea>
+    <p class="hint">${hint}</p>
+    <div class="btns"><button class="btn ghost" data-act="copy">${I.copy}복사</button><button class="btn" data-act="file">${I.share}파일로 공유</button></div></section>`;
+}
+
+/* ---------- full-screen scoreboard ---------- */
+function vTV(g){
+  const us=!defending(g),B=curBatter(g),fin=g.status==='final';
+  const team=t=>`<div class="tv-team"><span class="n ${!fin&&bat(g)===t?'bat':''}">${esc(t==='us'?D.team:g.opp)}</span><span class="r">${tot(g,t)}</span></div>`;
+  let whoTxt='';
+  if(!fin){
+    if(us)whoTxt=B?`<small>${B.i+1}번 타자</small>${esc(pname(B.pid))}`:'';
+    else{const p=curApp(g);whoTxt=`<small>투수</small>${esc(appName(p))} · ${kidPitches(g,p.pid)}구`}
+  }
+  return `<div class="tv" role="dialog" aria-label="전광판">
+    <div class="tv-top"><span class="tv-inn">${fin?'경기 종료':`${g.inning}회 ${g.top?'초':'말'}`}</span><button class="tv-x" data-act="tvClose" aria-label="전광판 닫기">${I.x}</button></div>
+    <div class="tv-main">
+      <div class="tv-score">${(g.first?['us','opp']:['opp','us']).map(team).join('')}${lineScore(g)}</div>
+      ${fin?'':`<div class="tv-side"><div class="tv-row" style="display:flex;gap:4vmin;align-items:center"><div class="tv-cnt"><div><span>B</span>${dots(g.balls,3,'b')}</div><div><span>S</span>${dots(g.strikes,2,'s')}</div><div><span>O</span>${dots(g.outs,2,'o')}</div></div>${diamond(g,false)}</div><div class="tv-who">${whoTxt}</div></div>`}
+    </div>
+    ${fin?'':(R.tvPad?`<div class="tv-pad"><button class="b1" data-pitch="ball">볼</button><button class="b2" data-pitch="strike">스트라이크</button><button class="b3" data-pitch="foul">파울</button><button class="b4" data-sheet="result">결과</button><button class="b5" data-act="undo" aria-label="되돌리기">${I.undo}</button></div><button class="tv-hide" data-act="tvPad">입력 버튼 숨기기</button>`:`<button class="tv-hide" data-act="tvPad">입력 버튼 보이기</button>`)}
+  </div>`;
+}
+
+/* ---------- sheets ---------- */
+function vSheet(){
+  const g=R.gid?G():null,t=R.sheet;let b='';
+  if(t==='result'&&g){
+    const who=defending(g)?`상대 ${curApp(g).bf+1}번째 타자`:(curBatter(g)?pname(curBatter(g).pid):'');
+    b=`<div class="sh-h"><b>결과</b><span>${esc(who)} · ${g.balls}볼 ${g.strikes}스트라이크</span></div>
+      ${GROUPS.map(([tt,codes])=>`<div class="grp"><div class="eyebrow">${tt}</div><div class="rg">${codes.map(c=>`<button class="rb ${RES[c].g}" data-res="${c}">${RES[c].l}</button>`).join('')}</div></div>`).join('')}`;
+  }else if(t==='relief'&&g){
+    b=`<div class="sh-h"><b>투수 교체</b><span>${g.inning}회 · 지금 ${esc(appName(curApp(g)))}</span></div>
+      <div class="pick">${players().map(p=>`<button data-relief="${p.id}">${esc(p.name)}<small>${kidPitches(g,p.id)}구</small></button>`).join('')}</div>
+      <p class="hint">오른쪽 숫자는 오늘 누적 투구수예요.</p>`;
+  }else if(t==='more'&&g){
+    b=`<div class="menu">
+      <button data-act="menuPrep">${I.edit}경기 정보·타순 고치기</button>
+      <button data-act="menuTv">${I.tv}전광판으로 보기</button>
+      ${g.status==='live'?`<button data-act="endAsk">${I.flag}경기 종료</button>`:`<button data-act="reopen">${I.play}경기 다시 진행</button>`}
+      <button class="danger" data-act="delAsk">${I.trash}경기 삭제</button></div>`;
+  }else if(t==='newgame'){
+    b=`<div class="sh-h"><b>새 경기</b><span>${esc(D.team)}</span></div>
+      <div class="grid2">
+        <label class="f full">상대 팀<input id="ng-opp" placeholder="예: 백호 리틀" autocomplete="off"></label>
+        <label class="f">날짜<input type="date" id="ng-date" value="${today()}"></label>
+        <label class="f">구장<input id="ng-place" placeholder="예: 시민구장" value="${esc(lastGame()?.place||'')}"></label>
+        <label class="f">공격 순서<select id="ng-first"><option value="1">우리 선공 (초)</option><option value="0">우리 후공 (말)</option></select></label>
+        <label class="f">정규 이닝<select id="ng-inn">${[3,4,5,6,7,9].map(k=>`<option value="${k}" ${+D.innings===k?'selected':''}>${k}이닝</option>`).join('')}</select></label>
+      </div>
+      <p class="hint">${lastGame()?'지난 경기의 타순과 투수 순서를 그대로 가져와요.':'선수 명단 순서대로 타순을 채워요.'} 시작 후 준비 탭에서 바꿀 수 있어요.</p>
+      <button class="btn block" data-act="createGame">경기 시작</button>`;
+  }else if(t==='confirm'){
+    const c=R.sd||{};
+    b=`<div class="sh-h"><b>${esc(c.title)}</b></div><p class="hint" style="font-size:14px">${esc(c.body)}</p>
+      <div class="btns"><button class="btn ghost" data-act="closeSheet">취소</button><button class="btn ${c.danger?'danger':''}" data-confirm="${c.kind}">${esc(c.ok)}</button></div>`;
+  }
+  return `<div class="scrim" data-act="closeSheet"></div><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${b}</div>`;
+}
+const lastGame=()=>D.games.slice().sort((a,b)=>b.created-a.created)[0];
+const confirmSheet=(kind,title,body,ok,danger,extra)=>openSheet('confirm',{kind,title,body,ok,danger,...extra});
+
+/* ---------- render ---------- */
+const root=document.getElementById('root');
+function render(){
+  if(R.screen==='game'&&!G()){R.screen='home';R.gid=null;R.tv=false}
+  const g=R.screen==='game'?G():null;
+  let h=R.screen==='players'?vPlayers():R.screen==='settings'?vSettings():g?vGame(g):vHome();
+  if(R.screen!=='game')h+=vNav();
+  if(R.tv&&g)h+=vTV(g);
+  if(R.sheet)h+=vSheet();
+  root.innerHTML=h;
+  document.body.classList.toggle('lock',!!(R.sheet||R.tv));
+}
+
+/* ---------- actions ---------- */
+function commit(g,msg,withUndo){save();render();if(msg)snack(msg,withUndo)}
+function limitNote(g,pid,before){
+  const lim=+g.limit||75,after=kidPitches(g,pid);
+  if(before<lim&&after>=lim){buzz([80,60,80]);return ` · ⚠ ${pname(pid)} 제한 ${lim}구 도달`}
+  if(before<lim-15&&after>=lim-15){buzz([40,40,40]);return ` · ${pname(pid)} 제한까지 ${lim-after}구`}
+  return '';
+}
+function pitch(kind){
+  const g=G();if(!g||g.status!=='live')return;
+  if(!defending(g)&&!g.lineup.length){snack('준비 탭에서 타순을 먼저 정해 주세요');return}
+  snap(g);const def=defending(g),pid=def?curApp(g).pid:null,before=def?kidPitches(g,pid):0;
+  g.cur+={ball:'B',strike:'S',foul:'F'}[kind];let msg=null;
+  const add=()=>{if(def){const p=curApp(g);p.pc++;if(kind==='ball')p.bl++;else p.st++}};
+  if(kind==='ball'){g.balls++;if(g.balls>=4)msg=result(g,'BB',1);else add()}
+  else if(kind==='strike'){g.strikes++;if(g.strikes>=3)msg=result(g,'K',1);else add()}
+  else{add();if(g.strikes<2)g.strikes++}
+  if(def){const w=limitNote(g,pid,before);if(w)msg=(msg||`${appName({pid})} ${kidPitches(g,pid)}구`)+w}
+  buzz(10);commit(g,msg,!!msg);
+}
+function tapResult(code){
+  const g=G();if(!g)return;
+  if(!defending(g)&&!g.lineup.length){closeSheet();snack('준비 탭에서 타순을 먼저 정해 주세요');return}
+  snap(g);const def=defending(g),pid=def?curApp(g).pid:null,before=def?kidPitches(g,pid):0;
+  let n=1;if(code==='BB')n=Math.max(1,4-g.balls);if(code==='K')n=Math.max(1,3-g.strikes);
+  if(code==='HBP')g.cur+='H';else if(code!=='BB'&&code!=='K')g.cur+='X';
+  let msg=result(g,code,n);
+  if(def)msg+=limitNote(g,pid,before);
+  save();buzz(14);closeSheet();snack(msg,true);
+}
+function act(fn,msg){const g=G();snap(g);const m=fn(g);commit(g,m||msg,true)}
+
+function createGame(){
+  const opp=(document.getElementById('ng-opp').value||'').trim()||'상대팀';
+  const g=newGame({opp,date:document.getElementById('ng-date').value,place:document.getElementById('ng-place').value.trim(),first:document.getElementById('ng-first').value==='1',innings:+document.getElementById('ng-inn').value});
+  const last=lastGame(),alive=new Set(players().map(p=>p.id));
+  if(last&&last.lineup.length){g.lineup=last.lineup.filter(l=>alive.has(l.pid)).map(l=>({...l}));g.plan=last.plan.map(x=>alive.has(x)?x:'')}
+  else{g.lineup=players().map(p=>({pid:p.id,pos:p.pos||''}));const ps=[...players().filter(p=>p.pos==='P'),...players().filter(p=>p.pos!=='P')];g.plan=[...Array(g.innings)].map((_,i)=>ps.length?ps[i%ps.length].id:'')}
+  startHalf(g);D.games.push(g);save();
+  Object.assign(R,{screen:'game',gid:g.id,tab:'prep',prep:'lineup',sheet:null,sd:null,tv:false});swapM('game');
+  render();scrollTo(0,0);keepAwake();snack('타순과 투수 순서를 확인한 뒤 기록 탭으로 가세요');
+}
+function makeFile(name,body,type){return new File([body],name.replace(/[\\/:*?"<>|\s]+/g,'_'),{type})}
+async function shareFile(file){
+  try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:file.name});return true}}catch(e){if(e&&e.name==='AbortError')return true}
+  try{const u=URL.createObjectURL(file),l=document.createElement('a');l.href=u;l.download=file.name;document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),3000);snack('파일을 저장했어요');return true}catch(e){snack('이 화면에서는 파일을 만들 수 없어요. 복사를 이용하세요');return false}
+}
+let pendingImport=null;
+
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-goplan],[data-prep],[data-nav],[data-open],[data-tab],[data-ptab],[data-pitch],[data-res],[data-sheet],[data-act],[data-base],[data-relief],[data-confirm],[data-exp],[data-mv],[data-lrm],[data-pdel]');
+  if(!el)return;
+  const ds=el.dataset,g=G();
+  if(ds.nav!==undefined){setR({screen:ds.nav,gid:null,sheet:null,tv:false});scrollTo(0,0);return}
+  if(ds.open){const x=D.games.find(y=>y.id===ds.open);openGame(ds.open,x&&x.status==='final'?'sheet':'live');if(x&&x.status==='live')keepAwake();return}
+  if(ds.tab){if(R.sheet)closeSheet();setR({tab:ds.tab});scrollTo(0,0);return}
+  if(ds.ptab){setR({ptab:ds.ptab});return}
+  if(ds.exp){setR({exp:ds.exp});return}
+  if(ds.prep){setR({prep:ds.prep});return}
+  if(ds.goplan){setR({tab:'prep',prep:'pitch'});scrollTo(0,0);return}
+  if(ds.pitch)return pitch(ds.pitch);
+  if(ds.res)return tapResult(ds.res);
+  if(ds.sheet){if(ds.sheet==='result'&&g&&!defending(g)&&!g.lineup.length){snack('준비 탭에서 타순을 먼저 정해 주세요');return}openSheet(ds.sheet);return}
+  if(ds.base!==undefined)return act(x=>{const k=+ds.base;x.bases[k]=x.bases[k]?0:1;buzz(8);return null});
+  if(ds.relief){const pid=ds.relief;snap(g);g.apps.push(blankApp(g.inning,pid));note(g,`투수 교체 → ${pname(pid)}`);save();closeSheet();snack(`투수 교체: ${pname(pid)}`,true);return}
+  if(ds.mv){const [i,d]=ds.mv.split(',').map(Number),j=i+d;if(j<0||j>=g.lineup.length)return;act(x=>{const L=x.lineup;[L[i],L[j]]=[L[j],L[i]];return null});return}
+  if(ds.lrm!==undefined){act(x=>{const i=+ds.lrm,cur=x.idx%Math.max(1,x.lineup.length);x.lineup.splice(i,1);if(x.lineup.length&&i<cur)x.idx--;if(x.idx<0)x.idx=0;return '타순에서 뺐어요'});return}
+  if(ds.pdel){const p=P(ds.pdel);confirmSheet('delPlayer',`${p.name} 선수를 명단에서 뺄까요?`,'지난 경기 기록은 그대로 남고, 앞으로 고르는 목록에서만 사라져요.','명단에서 빼기',true,{pid:p.id});return}
+  if(ds.confirm){doConfirm(ds.confirm);return}
+  const a=ds.act;
+  switch(a){
+    case 'back':goHome();return;
+    case 'closeSheet':closeSheet();return;
+    case 'newGame':if(!players().length){snack('선수 탭에서 선수를 먼저 등록해 주세요');setR({screen:'players',ptab:'roster'});return}openSheet('newgame');setTimeout(()=>{const i=document.getElementById('ng-opp');if(i)i.focus()},250);return;
+    case 'createGame':createGame();return;
+    case 'hideEx':D.example=false;save();render();return;
+    case 'undo':undo();return;
+    case 'tv':openTv();return;
+    case 'menuTv':R.sheet=null;R.sd=null;R.tv=true;if(topM()==='sheet')swapM('tv');else pushM('tv');render();enterFull();return;
+    case 'tvClose':closeTv();return;
+    case 'tvPad':setR({tvPad:!R.tvPad});return;
+    case 'menuPrep':closeSheet();setR({tab:'prep',prep:'lineup'});scrollTo(0,0);return;
+    case 'run+':act(x=>{const t=bat(x);addRuns(x,t,1);note(x,t==='us'?'득점 +1':'실점 +1');return t==='us'?'득점 +1':'실점 +1'});return;
+    case 'run-':act(x=>{const t=bat(x),L=x.line[t];if(!(L[x.inning-1]>0))return '이번 이닝에 뺄 점수가 없어요';L[x.inning-1]--;if(t==='opp'){const p=curApp(x);if(p.r>0)p.r--}note(x,t==='us'?'득점 −1 (정정)':'실점 −1 (정정)');return '점수 −1'});return;
+    case 'out+':act(x=>{const before=x.outs;x.outs++;if(defending(x))curApp(x).outs+=Math.min(3,x.outs)-before;note(x,`아웃 추가 (${Math.min(3,x.outs)}아웃)`);return x.outs>=3?endHalf(x):`${x.outs}아웃`});return;
+    case 'skip':act(x=>{const B=curBatter(x);if(B)note(x,`${B.i+1}번 ${pname(B.pid)} 타석 건너뜀`);x.idx++;x.balls=0;x.strikes=0;x.cur='';return B?`${pname(B.pid)} 타석을 건너뛰었어요`:null});return;
+    case 'endHalf':act(x=>endHalf(x));return;
+    case 'lineAdd':{const used=new Set(g.lineup.map(l=>l.pid)),p=players().find(p=>!used.has(p.id));if(!p){snack('명단의 모든 선수가 이미 타순에 있어요');return}act(x=>{x.lineup.push({pid:p.id,pos:p.pos||''});return null});return}
+    case 'lineFill':act(x=>{x.lineup=players().map(p=>({pid:p.id,pos:p.pos||''}));return '명단 전원을 넣었어요'});return;
+    case 'endAsk':confirmSheet('endGame','경기를 끝낼까요?',`${D.team} ${tot(g,'us')} : ${tot(g,'opp')} ${g.opp}로 기록을 마무리해요. 나중에 다시 진행할 수 있어요.`,'경기 종료');return;
+    case 'reopen':snap(g);g.status='live';closeSheet();R.tab='live';commit(g,'경기를 다시 진행해요',true);return;
+    case 'delAsk':confirmSheet('delGame','이 경기를 삭제할까요?',`vs ${g.opp} (${g.date}) 기록이 모두 지워지고 되돌릴 수 없어요.`,'삭제',true);return;
+    case 'wipeAsk':confirmSheet('wipe','모든 기록을 지울까요?','경기와 선수 명단이 모두 지워지고 되돌릴 수 없어요. 먼저 백업 파일을 만들어 두는 걸 권해요.','모두 지우기',true);return;
+    case 'addPlayer':{const n=document.getElementById('newName'),pp=document.getElementById('newPos'),name=n.value.trim();if(!name){n.focus();snack('이름을 입력해 주세요');return}
+      if(players().some(p=>p.name===name)){snack('같은 이름이 있어요. ‘민준A’처럼 구분해 주세요');return}
+      D.roster.push({id:uid(),name,pos:pp.value});D.example=false;save();render();const n2=document.getElementById('newName');if(n2)n2.focus();snack(`${name} 선수를 추가했어요`);return}
+    case 'copy':{const ta=document.getElementById('exp'),txt=ta.value;try{navigator.clipboard.writeText(txt).then(()=>snack('복사했어요'),()=>{ta.focus();ta.select();snack('선택됐어요. 길게 눌러 복사하세요')})}catch(err){ta.focus();ta.select();snack('선택됐어요. 길게 눌러 복사하세요')}return}
+    case 'file':{const csv=R.exp==='tsv',txt=exportCur(g),body=csv?'﻿'+txt.split('\n').map(l=>l.split('\t').map(c=>/[",]/.test(c)?`"${c.replace(/"/g,'""')}"`:c).join(',')).join('\n'):txt;
+      shareFile(makeFile(`${g.date}_${D.team}_vs_${g.opp}_${{sum:'요약',pbp:'세부기록',tsv:'기록표'}[R.exp]}.${csv?'csv':'txt'}`,body,csv?'text/csv':'text/plain'));return}
+    case 'backup':shareFile(makeFile(`야구기록지_백업_${today()}.json`,JSON.stringify({app:'youth-scorebook',v:3,exported:new Date().toISOString(),data:D}),'application/json'));return;
+    case 'import':document.getElementById('importFile').click();return;
+  }
+});
+function doConfirm(kind){
+  const g=G();
+  if(kind==='endGame'){snap(g);g.status='final';closeSheet();closeTv();R.tab='sheet';commit(g,`경기 종료 · ${WL[outcome(g)]}`,true);return}
+  if(kind==='delGame'){const id=g.id;D.games=D.games.filter(x=>x.id!==id);save();goHome();snack('경기를 삭제했어요');return}
+  if(kind==='delPlayer'){const p=P(R.sd.pid);if(p){if(D.games.some(x=>x.pa.some(y=>y.pid===p.id)||x.apps.some(y=>y.pid===p.id)||x.lineup.some(y=>y.pid===p.id)))p.gone=true;else D.roster=D.roster.filter(x=>x.id!==p.id)}D.example=false;save();closeSheet();snack('명단에서 뺐어요');return}
+  if(kind==='wipe'){const team=D.team;D=defaults();D.team=team;save();hist.length=0;closeSheet();setR({screen:'home'});snack('모든 기록을 지웠어요');return}
+  if(kind==='import'&&pendingImport){D=pendingImport;pendingImport=null;save();hist.length=0;closeSheet();setR({screen:'home'});snack('백업을 불러왔어요');return}
+}
+document.getElementById('importFile').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+  const rd=new FileReader();rd.onload=()=>{try{const j=JSON.parse(rd.result),d=j.data||j;if(d.v!==3||!Array.isArray(d.roster)||!Array.isArray(d.games))throw 0;
+    pendingImport=d;confirmSheet('import','백업을 불러올까요?',`경기 ${d.games.length}개, 선수 ${d.roster.filter(p=>!p.gone).length}명이 들어 있어요. 지금 이 휴대폰의 기록은 백업 내용으로 바뀌어요.`,'불러오기',true)}
+    catch(err){snack('야구 기록지 백업 파일이 아니에요')}};rd.readAsText(f);
+});
+document.addEventListener('keydown',e=>{
+  const t=e.target;
+  if((e.key==='Enter'||e.key===' ')&&t.dataset&&t.dataset.base!==undefined){e.preventDefault();t.dispatchEvent(new MouseEvent('click',{bubbles:true}))}
+  if(e.key==='Enter'&&t.id==='newName'){e.preventDefault();document.querySelector('[data-act="addPlayer"]').click()}
+  if(e.key==='Escape'&&(R.sheet||R.tv)){R.sheet?closeSheet():closeTv()}
+});
+function onField(e){
+  const el=e.target,d=el.dataset,g=G();
+  if(d.g!==undefined&&g){const k=d.g;
+    if(k==='first'){if(g.pa.length||g.apps.some(a=>a.pc||a.bf))return;g.first=el.value==='1';g.apps=[];g.line={us:[],opp:[]};startHalf(g)}
+    else g[k]=(k==='innings'||k==='limit')?(+el.value||0):el.value;
+    save();if(e.type==='change'&&(k==='innings'||k==='first'))render();return}
+  if(d.set){D[d.set]=d.set==='team'?el.value:(+el.value||0);save();return}
+  if(d.pname){const p=P(d.pname);if(p){p.name=el.value;D.example=false;save()}return}
+  if(d.ppos){const p=P(d.ppos);if(p){p.pos=el.value;save()}return}
+  if(e.type!=='change')return;
+  if(d.lslot!==undefined&&g){snap(g);const i=+d.lslot;g.lineup[i].pid=el.value;const p=P(el.value);if(p&&!g.lineup[i].pos)g.lineup[i].pos=p.pos||'';save();render();return}
+  if(d.lpos!==undefined&&g){g.lineup[+d.lpos].pos=el.value;save();return}
+  if(d.plan&&g){const inn=+d.plan;g.plan[inn-1]=el.value;const a=g.apps.find(x=>x.inn===inn);if(a&&!a.pc&&!a.bf)a.pid=el.value;save();render();return}
+}
+document.addEventListener('input',onField);
+document.addEventListener('change',onField);
+
+/* ---------- boot ---------- */
+load();
+render();
+</script>
+
+<script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}))}</script>
+</body>
+</html>
