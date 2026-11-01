@@ -1,11 +1,13 @@
 [
   {
-    "relation": ["delegate_permission/common.handle_all_urls"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
     "target": {
       "namespace": "android_app",
-      "package_name": "com.CHANGE_ME.playball",
+      "package_name": "com.wlsdn6056.playball",
       "sha256_cert_fingerprints": [
-        "CHANGE_ME:앱_서명_키_SHA-256_지문을_여기에"
+        "14:18:7B:15:21:1A:45:1C:71:1B:E8:83:54:AA:D2:98:92:9D:09:DA:91:B0:C5:19:86:9B:5E:45:B3:81:AB:64"
       ]
     }
   }
