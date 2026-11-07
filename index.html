@@ -318,6 +318,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <div class="seg"><input type="radio" name="hand" id="h-r" value="R" checked><label for="h-r">오른손</label><input type="radio" name="hand" id="h-l" value="L"><label for="h-l">왼손</label></div>
       </div>
       <label class="switch" id="ballField"><span><b>공을 칠 때만 분석</b><br><span class="muted" style="font-size:.84rem">타격음이나 미트 소리가 없는 연습 스윙은 빼요. 티배팅처럼 공 소리가 없는 영상이면 꺼주세요</span></span><input type="checkbox" id="ballOnly" checked></label>
+      <label class="switch" id="preciseField"><span><b>정밀 분석 (YOLO26)</b><br><span class="muted" style="font-size:.84rem">그물 뒤나 멀리 있는 선수를 더 잘 찾아요. 분석이 3~4배쯤 느리고, 처음 한 번 AI(약 6MB)를 더 내려받아요</span></span><input type="checkbox" id="precise"></label>
       <label class="switch"><span><b>얼굴 가리기</b><br><span class="muted" style="font-size:.84rem">리포트를 공유할 때 아이들 얼굴을 모자이크해요</span></span><input type="checkbox" id="blur" checked></label>
       <input type="file" id="file" accept="video/*" class="vh">
       <label for="file" class="btn primary big" id="pickBtn">사진첩에서 영상 고르기</label>
@@ -518,7 +519,8 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
       <h3>이 앱에 대해</h3>
       <p>영상 속 관절 위치를 AI가 찾아 각도를 재는 2D 분석이에요. 촬영 각도와 가림에 따라 오차가 생기고, 기준값은 아직 전문가 검증 전 임시 값이에요. 의료 진단을 대체하지 않아요.</p>
       <p>영상은 서버로 올라가지 않고 이 폰 안에서만 분석해요. 기록도 이 폰에만 저장돼요.</p>
-      <p><a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a> · 버전 1.0.0</p>
+      <p>이 앱은 오픈소스(GNU AGPL-3.0)로 공개돼요. 소스 코드: <a href="https://github.com/wlsdn6056-cpu/wlsdn6056-cpu.github.io" target="_blank" rel="noopener">GitHub</a><br>사용한 오픈소스: 정밀 분석 YOLO26(Ultralytics, AGPL-3.0) · 기본 분석 MoveNet과 TensorFlow.js(Google, Apache-2.0) · jsPDF(MIT) · <a href="THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener">자세히</a></p>
+      <p><a href="privacy.html" target="_blank" rel="noopener">개인정보처리방침</a> · 버전 1.1.0</p>
     </div>
   </section>
 </div>
@@ -733,6 +735,9 @@ if(saved.mode)document.querySelector(`input[name=mode][value=${saved.mode}]`).ch
 if(saved.hand)document.querySelector(`input[name=hand][value=${saved.hand}]`).checked=true;
 if(saved.blur!=null)$("blur").checked=saved.blur;
 if(saved.ballOnly!=null)$("ballOnly").checked=saved.ballOnly;
+if(saved.precise!=null)$("precise").checked=saved.precise;
+$("precise").addEventListener("change",e=>{if(e.target.checked)loadYolo().catch(()=>{})});
+if(saved.precise)setTimeout(()=>loadYolo().catch(()=>{}),1500);
 if(saved.dist!=null){const opt=[...$("pDist").options].some(o=>o.value===String(saved.dist));
   if(opt)$("pDist").value=saved.dist;else{$("pDist").value="custom";$("distCustom").value=saved.dist}}
 function syncCustom(){$("distCustomBox").hidden=$("pDist").value!=="custom"}
@@ -742,7 +747,7 @@ function syncDistErr(){$("distErr").hidden=distValue()!=="bad"}
 $("distCustom").addEventListener("input",syncDistErr);$("pDist").addEventListener("change",syncDistErr);
 function syncDist(){const pit=document.querySelector("input[name=mode]:checked").value==="PITCHING";$("distField").hidden=!pit;$("ballField").hidden=pit}
 document.querySelectorAll("input[name=mode]").forEach(r=>r.addEventListener("change",syncDist));syncDist();
-function settings(){return{ballOnly:$("ballOnly").checked,dist:distValue(),player:($("player").value.trim()||"선수1").slice(0,20),mode:document.querySelector("input[name=mode]:checked").value,
+function settings(){return{precise:$("precise").checked,ballOnly:$("ballOnly").checked,dist:distValue(),player:($("player").value.trim()||"선수1").slice(0,20),mode:document.querySelector("input[name=mode]:checked").value,
   hand:document.querySelector("input[name=hand]:checked").value,blur:$("blur").checked}}
 
 /* --- 모델 --- */
@@ -797,8 +802,8 @@ async function detectAt(L){
   inCan.width=W;inCan.height=H;inCtx.drawImage(vid,0,0,W,H);
   return people(await infer(),(nx,ny)=>[nx*vw,ny*vh]);
 }
-async function detectFull(){return mergePeople([...(await detectAt(384)),...(await detectAt(640))])}
-async function detectCrop(cx,cy,size){
+async function mnFull(){return mergePeople([...(await detectAt(384)),...(await detectAt(640))])}
+async function mnCrop(cx,cy,size){
   const vw=vid.videoWidth,vh=vid.videoHeight,S=256;inCan.width=S;inCan.height=S;
   inCtx.fillStyle="#000";inCtx.fillRect(0,0,S,S);
   const sx=cx-size/2,sy=cy-size/2,k=S/size;
@@ -806,6 +811,40 @@ async function detectCrop(cx,cy,size){
   if(bx-ax>2&&by-ay>2)inCtx.drawImage(vid,ax,ay,bx-ax,by-ay,(ax-sx)*k,(ay-sy)*k,(bx-ax)*k,(by-ay)*k);
   return people(await infer(),(nx,ny)=>[sx+nx*size,sy+ny*size]);
 }
+
+/* --- 정밀 분석: YOLO26n-pose (Ultralytics, AGPL-3.0). 640×640 입력, 결과 [300, 57] = 상자4·점수·클래스·관절17×(x,y,확신도) --- */
+let yolo=null,yoloP=null;const Y=640,yCan=document.createElement("canvas");yCan.width=Y;yCan.height=Y;
+const yCtx=yCan.getContext("2d",{willReadFrequently:true});
+function loadYolo(){
+  if(!yoloP)yoloP=(async()=>{await modelP;const m=await tf.loadGraphModel("model26/model.json");
+    const z=tf.zeros([1,Y,Y,3]);const o=m.execute(z);(Array.isArray(o)?o:[o]).forEach(t=>t.dispose());z.dispose();yolo=m;return m})()
+    .catch(e=>{yoloP=null;throw e});
+  return yoloP;
+}
+const precise=()=>!!(state&&state.precise&&yolo);
+async function yoloInfer(map){
+  const out=tf.tidy(()=>yolo.execute(tf.expandDims(tf.div(tf.cast(tf.browser.fromPixels(yCan),"float32"),255),0)));
+  const d=await out.data();out.dispose();const res=[];
+  for(let i=0;i<300;i++){const o=i*57;if(d[o+4]<.25)continue;
+    const[x1,y1]=map(d[o],d[o+1]),[x2,y2]=map(d[o+2],d[o+3]),kp=[];
+    for(let k=0;k<17;k++){const[x,y]=map(d[o+6+3*k],d[o+7+3*k]);kp.push([x,y,d[o+8+3*k]])}
+    res.push({kp,box:[x1,y1,x2,y2],score:d[o+4]})}
+  return res;
+}
+async function yoloFull(){
+  const vw=vid.videoWidth,vh=vid.videoHeight,s=Y/Math.max(vw,vh),nw=Math.round(vw*s),nh=Math.round(vh*s),px=Math.floor((Y-nw)/2),py=Math.floor((Y-nh)/2);
+  yCtx.fillStyle="rgb(114,114,114)";yCtx.fillRect(0,0,Y,Y);yCtx.drawImage(vid,px,py,nw,nh);
+  return yoloInfer((x,y)=>[(x-px)/s,(y-py)/s]);
+}
+async function yoloCrop(cx,cy,size){
+  const vw=vid.videoWidth,vh=vid.videoHeight,sx=cx-size/2,sy=cy-size/2,k=Y/size;
+  yCtx.fillStyle="rgb(114,114,114)";yCtx.fillRect(0,0,Y,Y);
+  const ax=Math.max(0,sx),ay=Math.max(0,sy),bx=Math.min(vw,sx+size),by=Math.min(vh,sy+size);
+  if(bx-ax>2&&by-ay>2)yCtx.drawImage(vid,ax,ay,bx-ax,by-ay,(ax-sx)*k,(ay-sy)*k,(bx-ax)*k,(by-ay)*k);
+  return yoloInfer((x,y)=>[sx+x/k,sy+y/k]);
+}
+async function detectFull(){return precise()?yoloFull():mnFull()}
+async function detectCrop(cx,cy,size){return precise()?yoloCrop(cx,cy,size):mnCrop(cx,cy,size)}
 const center=b=>[(b[0]+b[2])/2,(b[1]+b[3])/2];
 
 /* --- 그리기 --- */
@@ -879,6 +918,8 @@ $("file").addEventListener("change",async e=>{
   if(state.url)URL.revokeObjectURL(state.url);
   state={name:f.name,file:f,pid:curPlayer().id,...settings()};
   show("pick");$("pickMsg").hidden=false;$("pickMsg").textContent="영상을 불러오는 중…";$("startScan").disabled=true;
+  if(state.precise){$("pickMsg").textContent="정밀 분석 AI(YOLO26)를 준비하는 중… 처음 한 번은 내려받느라 조금 걸려요";
+    try{await loadYolo()}catch(err){console.error(err);state.precise=false;state.preciseFail=true}}
   const res=await openVideo(f);
   if(!res.ok){show("home");const el=$("homeErr");el.hidden=false;
     el.innerHTML="이 영상을 열 수 없어요. 아래 내용을 캡처해서 알려주세요.<br><span class='diag'></span>";
@@ -1017,7 +1058,9 @@ function renderResult(complete){
   renderQuality(Q);
   {const n=an.practice||0,el2=$("rTrend");
    if(state.mode==="BATTING"&&an.requireBall&&n)el2.textContent+=` 공 소리가 없는 연습 스윙 ${n}회는 분석에서 뺐어요.`;
-   if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";}
+   if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
+   if(state.precise)el2.textContent+=" 정밀 분석(YOLO26)으로 분석했어요.";
+   if(state.preciseFail)el2.textContent+=" 정밀 분석 AI를 불러오지 못해 기본 AI로 분석했어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
   ap.textContent=`이 영상의 투구 ${S.n}개를 투구 기록에 추가`;ap.onclick=()=>openLog(S.n);
   $("rN").textContent=S.n;$("rF").textContent=S.flaggedN;$("rS").textContent=S.avg==null?"-":Math.round(S.avg)+"%";

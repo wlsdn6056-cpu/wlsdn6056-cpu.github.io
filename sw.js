@@ -1,5 +1,5 @@
 /* PlayBall AI 오프라인 지원: 앱 화면·AI 모델·라이브러리를 처음 한 번 저장해 두고, 이후엔 인터넷 없이도 분석 */
-const VERSION = "playball-v1.0.0";
+const VERSION = "playball-v1.1.0";
 const CORE = [
   "./", "index.html", "manifest.json", "privacy.html",
   "lib/tf-core.min.js", "lib/tf-converter.min.js", "lib/tf-backend-webgl.min.js", "lib/jspdf.umd.min.js",
