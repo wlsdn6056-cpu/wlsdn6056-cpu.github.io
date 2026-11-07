@@ -957,15 +957,20 @@ async function scan(){
   const segs=[[t0,dur],[0,t0]];
   const total=Math.max(1,Math.ceil(dur/step));let done=0;const started=performance.now();
   const can=$("scanCan");
-  const q={samples:0,tracked:0,conf:[],h:[],oblique:0,views:0};state.q=q;state.trackLog=[];state.throws=[];
+  const q={samples:0,tracked:0,conf:[],h:[],oblique:0,views:0};state.q=q;state.trackLog=[];state.poseLog=[];state.throws=[];
+  /* 빠르게: 가만히 있는 구간은 초당 7.5장, 움직임·타격음·글러브 소리 근처는 초당 15장으로 촘촘하게 */
+  const hot=[];
+  if(state.mode==="BATTING"&&an.hints)an.hints.forEach(h=>hot.push([h-.7,h+.35]));
+  if(state.mode==="PITCHING"&&state.O)contactTimes(state.O,dur).forEach(pp=>hot.push([pp-1.1,pp+.15]));
+  const isHot=t=>hot.some(([x,y])=>t>=x&&t<=y);let covered=0;
   /* 선택한 선수의 옷 색 특징(상체·하체 색 분포)을 기억해 다른 사람(포수 등)으로 바뀌지 않게 한다 */
   await seekTo(state.pickT);const ref={h:appearance(sel)};
   for(const[a,b]of segs){
     if(state.cancel)break;
     an.softReset();
-    let track={c:center(sel.box),h:sel.box[3]-sel.box[1]},lost=0,seen=false;
+    let track={c:center(sel.box),h:sel.box[3]-sel.box[1]},lost=0,seen=false,denseUntil=-1;
     const anchor={c:center(sel.box),h:sel.box[3]-sel.box[1]};
-    for(let t=a;t<b-1e-3;t+=step){
+    for(let t=a,st=step;t<b-1e-3;t+=st){
       if(state.cancel)break;
       await seekTo(t);
       /* 3초(45장) 넘게 놓치면 마지막 위치 대신 처음 선택한 자리(타석·마운드)에서만 다시 찾는다 */
@@ -981,17 +986,19 @@ async function scan(){
       let res=null;
       if(p)seen=true;
       if(seen){q.samples++;if(p){q.tracked++;q.conf.push(p.kp.slice(5).reduce((a,k)=>a+k[2],0)/12);q.h.push((p.box[3]-p.box[1])/vid.videoHeight)}}
-      if(p){lost=0;const c=center(p.box),h=p.box[3]-p.box[1];state.trackLog.push([t,c[0],c[1],h]);
+      if(p){lost=0;const c=center(p.box),h=p.box[3]-p.box[1];state.trackLog.push([t,c[0],c[1],h]);state.poseLog.push({t,kp:p.kp.map(k=>k.slice()),box:p.box.slice()});
         track={c:[.5*track.c[0]+.5*c[0],.5*track.c[1]+.5*c[1]],h:.7*track.h+.3*h};
         if(p._sim!=null&&p._sim>.85&&p.kp.slice(5).reduce((a,k)=>a+k[2],0)/12>.45){const cur=appearance(p);ref.h=ref.h.map((v,i)=>.92*v+.08*cur[i])}
         res=an.update(p,t,(kp,valid)=>makeThumb(p.box,kp,valid,state.blur));
         if(res&&res.m){q.views++;if(res.m.view==="oblique")q.oblique++}}
+      if(an.rec||(res&&res.m&&Math.max(res.m.speed||0,(res.m.arm||0)*.85)>=CFG.speedStart*.5))denseUntil=t+.8;
+      st=(!p||isHot(t)||t<denseUntil)?step:2*step;covered+=st;
       done++;
       if(done%3===0||done===1){
         const s=drawFrame(can,640),ctx=can.getContext("2d");
         if(state.blur&&p)pixelateFaces(ctx,[p],s);
         if(res&&res.kp)drawSkeleton(ctx,res.kp,res.valid,s,res.flags.length?(COL.alert||"#D2552A"):"#FFD24A",2.5);
-        const r=done/total,el=(performance.now()-started)/1000,eta=el/r-el;
+        const r=Math.min(1,Math.max(covered,1e-3)/dur),el=(performance.now()-started)/1000,eta=el/r-el;
         $("scanBar").style.width=(r*100).toFixed(1)+"%";
         $("scanText").textContent=`${Math.round(r*100)}% · 남은 시간 약 ${fmt(eta)} · 찾은 동작 ${an.swings.length+(an.rec?0:0)}회`;
         await new Promise(r=>setTimeout(r,0));
@@ -1478,11 +1485,22 @@ async function poseNear(t,c,h){
 }
 async function throwBefore(pop){
   const tr=trackNear(pop-.4);if(!tr)return{err:"선수를 찾지 못했어요"};
-  let c=[tr[1],tr[2]];const h=tr[3],fr=[],FT=state.frameTimes,steps=[];
+  let c=[tr[1],tr[2]];const h=tr[3],FT=state.frameTimes,steps=[];let fr=[];
   if(FT&&FT.length>10){for(let i=0;i<FT.length;i++){const ft=FT[i];if(ft<pop-.9)continue;if(ft>pop+.05)break;const d=(i+1<FT.length?FT[i+1]:ft+1/30)-ft;steps.push([ft,ft+d*.45])}}
   else for(let t=Math.max(0,pop-.9);t<=Math.min(vid.duration,pop+.05);t+=1/30)steps.push([t,t]);
-  for(const[ft,seekT]of steps){
-    if(state.cancel)return null;const p=await poseNear(seekT,c,h);if(p){fr.push({t:ft,kp:p.kp});c=center(p.box)}}
+  /* 빠르게: 전체 분석 때 이미 찾은 자세(초당 15장)를 다시 쓰고, 손이 가장 높은 순간 앞뒤만 모든 프레임을 새로 본다 */
+  const frameAt=t=>{if(!FT||FT.length<10)return t;let lo=0,hi=FT.length-1;if(t<FT[0])return FT[0];while(lo<hi){const m=(lo+hi+1)>>1;if(FT[m]<=t+1e-4)lo=m;else hi=m-1}return FT[lo]};
+  for(const e of state.poseLog||[])if(e.t>=pop-.9&&e.t<=pop+.05){const ft=frameAt(e.t);if(!fr.some(f=>Math.abs(f.t-ft)<.004))fr.push({t:ft,kp:e.kp,c:center(e.box)})}
+  if(fr.length>=6){
+    const want=new Map();
+    for(const wr of[9,10]){const pts=fr.filter(f=>f.kp[wr][2]>.2&&f.t<=pop-.12);if(pts.length<3)continue;
+      const H=pts.reduce((x,y)=>y.kp[wr][1]<x.kp[wr][1]?y:x);
+      for(const s of steps)if(Math.abs(s[0]-H.t)<=.12&&!fr.some(f=>Math.abs(f.t-s[0])<.004))want.set(s[0],[s,H.c])}
+    for(const[s,cc]of want.values()){if(state.cancel)return null;const p=await poseNear(s[1],cc,h);if(p)fr.push({t:s[0],kp:p.kp,c:center(p.box)})}
+  }else{fr=[];
+    for(const[ft,seekT]of steps){
+      if(state.cancel)return null;const p=await poseNear(seekT,c,h);if(p){fr.push({t:ft,kp:p.kp});c=center(p.box)}}}
+  fr.sort((x,y)=>x.t-y.t);
   let best=null;
   for(const wr of[SIDE[state.hand].wr,SIDE[state.hand==="R"?"L":"R"].wr]){
     const sh=wr===10?6:5,pts=fr.filter(f=>f.kp[wr][2]>.2&&f.t<=pop-.12);if(pts.length<4)continue;
