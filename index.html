@@ -667,7 +667,7 @@ class Analyzer{
     const r=this.rec;this.rec=null;if(!r)return;
     if(!r.sideOK)delete r.ext.stride_max;
     if(r.peakSpeed<CFG.speedPeakMin||r.last-r.start<.2)return;
-    if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown){this.nonThrow=(this.nonThrow||0)+1;return}
+    if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown)r.notThrow=true;   /* 던지는 팔 흐름이 안 보인 동작: 글러브 소리로 투구가 확인되지 않으면 나중에 뺀다 */
     /* 공이 있을 때만: 휘두른 순간 앞뒤로 공 소리(타격음·미트 소리)가 없으면 연습 스윙으로 보고 뺀다 */
     if(this.requireBall&&this.mode==="BATTING"&&!r.byAudio&&!this.hints.some(tc=>tc>=r.peakT-.35&&tc<=r.peakT+.6)){this.practice++;return}
     if(r.byAudio)this.lastHit=r.hintT;
@@ -1013,6 +1013,10 @@ async function scan(){
   }
   try{await wakeLock?.release()}catch{}
   if(state.mode==="PITCHING"&&+state.dist>0&&an.swings.length&&!state.cancel)await estimateSpeeds(an);
+  if(state.mode==="PITCHING"&&!state.cancel){
+    if(!(state.throws||[]).some(x=>x.isThrow)){const b0=an.swings.length;an.swings=an.swings.filter(s=>!s.notThrow);an.nonThrow=b0-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
+    await resnapAtRelease(an);
+  }
   const complete=!state.cancel;state.cancel=false;
   renderResult(complete);
 }
@@ -1485,6 +1489,44 @@ async function videoFrameTimes(file){
   }
   return null;
 }
+
+/* 공 놓는 순간 다시 찾기: 예상 시각(글러브 소리 − 다른 투구들의 비행시간) 앞뒤 0.12초를 모든 프레임으로 보고 던지는 손목이 가장 높은 순간을 찾는다 */
+async function refineRelease(pop,ctr){
+  const tr=trackNear(ctr);if(!tr)return null;let c=[tr[1],tr[2]];const h=tr[3],FT=state.frameTimes,wr=SIDE[state.hand].wr,fr=[],steps=[];
+  if(FT&&FT.length>10){for(let i=0;i<FT.length;i++){const ft=FT[i];if(ft<ctr-.12)continue;if(ft>ctr+.12)break;const d=(i+1<FT.length?FT[i+1]:ft+1/30)-ft;steps.push([ft,ft+d*.45])}}
+  else for(let t=ctr-.12;t<=ctr+.12;t+=1/30)steps.push([t,t]);
+  for(const[ft,sk]of steps){if(state.cancel)return null;const p=await poseNear(sk,c,h);if(p&&p.kp[wr][2]>.2){fr.push({t:ft,y:p.kp[wr][1]});c=center(p.box)}}
+  if(fr.length<3)return null;let i=0;fr.forEach((f,k)=>{if(f.y<fr[i].y)i=k});if(i===0||i===fr.length-1)return null;
+  const[t0,t1,t2]=[fr[i-1].t,fr[i].t,fr[i+1].t],[y0,y1,y2]=[fr[i-1].y,fr[i].y,fr[i+1].y],den=(t0-t1)*(t0-t2)*(t1-t2);
+  if(Math.abs(den)<1e-9)return t1;const A=(t2*(y1-y0)+t1*(y0-y2)+t0*(y2-y1))/den,B=(t2*t2*(y0-y1)+t1*t1*(y2-y0)+t0*t0*(y1-y2))/den;
+  if(A>0){const v=-B/(2*A);if(v>=t0&&v<=t2)return v}return t1;
+}
+/* 투구 판정은 공을 놓는 순간 자세로: 손목 속도가 가장 빠른 순간(이미 팔이 내려온 뒤) 대신, 공 놓는 순간의 팔꿈치·몸통·무릎을 다시 재고 대표 장면도 그 순간으로 바꾼다 */
+async function resnapAtRelease(an){
+  const hs=SIDE[state.hand],ls=SIDE[state.hand==="R"?"L":"R"],PL=state.poseLog||[];if(!PL.length)return;
+  for(const s of an.swings){
+    if(state.cancel)return;
+    let rel=s.release;
+    if(rel==null){const P=PL.filter(e=>e.t>=s.peakT-.4&&e.t<=s.peakT+.05&&e.kp[hs.wr][2]>.3&&e.kp[hs.sh][2]>.3&&e.kp[hs.wr][1]<e.kp[hs.sh][1]);
+      if(P.length)rel=P.reduce((a,b)=>b.kp[hs.wr][1]<a.kp[hs.wr][1]?b:a).t}
+    if(rel==null)continue;
+    let e=null,bd=.07;for(const q of PL){const d=Math.abs(q.t-rel);if(d<bd){bd=d;e=q}}if(!e)continue;
+    const kp=e.kp,ok=(...ids)=>ids.every(i=>kp[i][2]>=CFG.kpConf);if(!ok(5,6,11,12))continue;
+    const ms=[(kp[5][0]+kp[6][0])/2,(kp[5][1]+kp[6][1])/2],mh=[(kp[11][0]+kp[12][0])/2,(kp[11][1]+kp[12][1])/2],torso=Math.hypot(ms[0]-mh[0],ms[1]-mh[1]);if(torso<6)continue;
+    const side=Math.hypot(kp[5][0]-kp[6][0],kp[5][1]-kp[6][1])/torso<=CFG.viewSideMax;
+    const sn=s.snap||{};
+    if(ok(hs.sh,hs.el))sn.elbowH=(kp[hs.sh][1]-kp[hs.el][1])/torso;
+    sn.tilt=side?null:Math.abs(Math.atan2(ms[0]-mh[0],mh[1]-ms[1])*180/Math.PI);
+    if(ok(ls.hip,ls.kn,ls.an))sn.knee=angle3(kp[ls.hip],kp[ls.kn],kp[ls.an]);
+    if(ok(hs.sh,hs.el,hs.wr))sn.elbow=angle3(kp[hs.sh],kp[hs.el],kp[hs.wr]);
+    s.snap=sn;s.snapT=e.t;
+    const sv={};if(sn.tilt!=null)sv.trunk_tilt=severity(sn.tilt,...tiltLim("PITCHING"));if(sn.knee!=null)sv.knee_flex=severity(sn.knee,...LIMITS.knee_flex);
+    if(sn.elbowH!=null)sv.elbow_drop=severity(sn.elbowH,...LIMITS.elbow_drop);
+    const sm=s.sideOK?s.ext.stride_max:null;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high));
+    const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(k=>sv[k]>=.5).sort();
+    try{await seekTo(e.t);const th=makeThumb(e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
+  }
+}
 function trackNear(t){let best=null,bd=1.5;for(const e of state.trackLog||[]){const d=Math.abs(e[0]-t);if(d<bd){bd=d;best=e}}return best}
 async function poseNear(t,c,h){
   await seekTo(t);const ps=await detectCrop(c[0],c[1],clamp(h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2));
@@ -1526,7 +1568,8 @@ async function throwBefore(pop){
       const den=(t0-t1)*(t0-t2)*(t1-t2),A=(t2*(y1-y0)+t1*(y0-y2)+t0*(y2-y1))/den,B=(t2*t2*(y0-y1)+t1*t1*(y2-y0)+t0*t0*(y1-y2))/den;
       if(A>0){const v=-B/(2*A);if(v>=t0&&v<=t2)rel=v}}
     const frameDur=pts.length>1?(pts[pts.length-1].t-pts[0].t)/Math.max(1,pts.length-1):1/30;
-    const cand={rel,above,drop,frameDur,isThrow:above>=.15&&drop>=1.4};
+    const peaks=[];for(let i=1;i<pts.length-1;i++){const y=pts[i].kp[wr][1];if(y<=pts[i-1].kp[wr][1]&&y<=pts[i+1].kp[wr][1]&&(pts[i].kp[sh][1]-y)/torso>=.15)peaks.push(pts[i].t)}
+    const cand={rel,above,drop,frameDur,peaks,isThrow:above>=.15&&drop>=1.4};
     if(!best||(cand.isThrow&&!best.isThrow)||(cand.isThrow===best.isThrow&&cand.drop>best.drop))best=cand;
   }
   return best||{err:"던지는 팔을 찾지 못했어요"};
@@ -1540,8 +1583,11 @@ async function estimateSpeeds(an){
   const D=+state.dist,eff=D-(D<=16.5?clamp(D*.09,.6,1.3):1.7)+.3;
   state.speedEff=eff;
   /* 받는 사람 쪽에서 찍었는지: 던지는 선수가 거리에 비해 너무 크게 보이면 카메라가 선수 가까이 있는 것 → 공 소리가 선수 자신의 글러브 소리라 구속을 잴 수 없다 */
-  {const hs=(state.trackLog||[]).map(e=>e[3]/vid.videoHeight),hr=median(hs),k=vid.videoHeight>vid.videoWidth?1.375:.976,lim=2.2*1.6/(k*D);
-   if(hr!=null&&hr>lim){state.speedErr=`던지는 선수가 화면 높이의 ${Math.round(hr*100)}%로 크게 보여요. 구속은 공을 받는 사람 쪽에서 던지는 선수를 찍어야 계산할 수 있어요(선수 옆이나 가까이서 찍으면 선수 자신의 글러브 소리를 잘못 재요). 받는 사람 쪽에서 찍었다면 거리 설정(${D}m)이 실제보다 먼지 확인해 주세요.`;state.speedCam=true;return}}
+  /* 아이 키(나이별 평균)와 화면 속 크기로 카메라~아이 거리를 대략 추정 (1배 카메라 기준). 설정 거리와 많이 다르면 알려준다 */
+  {const hs=(state.trackLog||[]).map(e=>e[3]/vid.videoHeight),hr=median(hs),
+     H={"7-8":1.25,"9-10":1.38,"11-12":1.5,"13-14":1.62,"15-16":1.7,"17-18":1.73}[curPlayer().age]||1.5,k=vid.videoHeight>vid.videoWidth?1.24:.70;
+   state.distEst=hr?.88*H/(k*hr):null;
+   if(state.distEst&&state.distEst<3&&D>=6){state.speedErr=`던지는 선수가 화면에 아주 크게(높이의 ${Math.round(hr*100)}%) 찍혔어요. 구속은 공을 받는 사람 쪽에서 던지는 선수를 찍어야 계산할 수 있어요. 선수 옆이나 가까이서 찍으면 선수 자신의 글러브 소리를 잘못 재요.`;state.speedCam=true;return}}
   const pops=contactTimes(O,vid.duration);
   try{state.frameTimes=await videoFrameTimes(state.file)}catch(e){state.frameTimes=null}
   const FT=state.frameTimes;state.fps=FT&&FT.length>10?Math.round((FT.length-1)/(FT[FT.length-1]-FT[0])):null;
@@ -1554,8 +1600,15 @@ async function estimateSpeeds(an){
     const flight=pop-r.rel,kmh=eff/flight*3.6;
     if(flight<.15||kmh<20||kmh>170){state.throws.push({pop,isThrow:true,err:"계산 값이 비정상이에요"});continue}
     const fd=state.fps?1/state.fps:(r.frameDur||1/30),err=kmh*(fd/2)/flight;   /* 공 놓는 순간 오차 ≈ 반 프레임 (보간·자세 인식 흔들림 포함) */
-    state.throws.push({pop,isThrow:true,rel:r.rel,flight,kmh,err});
+    state.throws.push({pop,isThrow:true,rel:r.rel,flight,kmh,err,peaks:r.peaks});
   }
+  /* 같은 영상의 투구들은 공이 날아간 시간이 비슷하다 → 혼자 크게 다른 투구는, 손이 높이 올라간 다른 순간 중 다른 투구들과 맞는 순간으로 다시 잡는다 */
+  {const ok=state.throws.filter(x=>x.kmh);if(ok.length>=3){const mf=median(ok.map(x=>x.flight));
+    for(const x of state.throws){if(state.cancel)break;if(!x.kmh||Math.abs(x.flight-mf)/mf<=.12)continue;let best=null;
+      for(const p of x.peaks||[]){const f=x.pop-p;if(f<.15)continue;if(best==null||Math.abs(f-mf)<Math.abs(x.pop-best-mf))best=p}
+      if(best==null||Math.abs(x.pop-best-mf)/mf>.12){txt.textContent="구속 계산 중… 공 놓는 순간 다시 확인";best=await refineRelease(x.pop,x.pop-mf)}
+      if(best!=null&&Math.abs(x.pop-best-mf)/mf<=.12){x.rel=best;x.flight=x.pop-best;x.kmh=eff/x.flight*3.6;x.err=Math.max(x.err||0,x.kmh*(1/60)/x.flight);x.adjusted=true}}
+    for(const x of state.throws)if(x.kmh&&Math.abs(x.flight-mf)/mf>.15){x.kmh=null;x.err="공 놓는 순간을 확실히 찾지 못해 뺐어요"}}}
   /* 튀는 값 거르기: 이 나이에서 나오기 어려운 값, 다른 투구들과 30% 넘게 다른 값은 빼고 이유를 보여준다 */
   {const cap={"7-8":75,"9-10":90,"11-12":105,"13-14":125,"15-16":140,"17-18":155}[curPlayer().age]||130;
    state.throws.forEach(x=>{if(x.kmh&&x.kmh>cap){x.kmh=null;x.err=`이 나이에서 나오기 어려운 값이라 뺐어요`}});
@@ -1587,7 +1640,9 @@ function renderSpeed(an){
       :T.length?"공 소리는 찾았지만 투구 동작을 확인하지 못했어요. 던지는 선수 전신이 보이게, 받는 사람 쪽에서 찍어주세요.":"공이 글러브에 들어가는 소리를 찾지 못했어요.")+
     (catches?` 공을 받는 소리 ${catches}번은 투구가 아니라서 뺐어요.`:"")+
     (an.nonPitch?` 글러브 소리가 뒤따르지 않은 동작(공 받기 등) ${an.nonPitch}번은 투구 목록에서 뺐어요.`:"")+
-    (miss?` 측정 못 한 투구: ${miss}.`:"");
+    (miss?` 측정 못 한 투구: ${miss}.`:"")+
+    (T.some(x=>x.adjusted)?` 공 놓는 순간이 다른 투구와 크게 달랐던 ${T.filter(x=>x.adjusted).length}개는 다시 찾아 계산했어요.`:"")+
+    (sp.length&&state.distEst&&Math.abs(+state.dist-state.distEst)/state.distEst>.3?` ⚠ 영상 속 아이 크기로 보면 카메라에서 아이까지 약 ${Math.round(state.distEst)}m로 보이는데, 설정한 거리는 ${state.dist}m예요(1배 카메라·나이별 평균 키로 어림한 값). 실제 거리를 줄자로 재서 넣으면 구속이 정확해져요.`:"");
 }
 
 /* ===== 선수 프로필 ===== */
