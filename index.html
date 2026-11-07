@@ -558,6 +558,7 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function angle3(a,b,c){const v1=[a[0]-b[0],a[1]-b[1]],v2=[c[0]-b[0],c[1]-b[1]];
   const cos=(v1[0]*v2[0]+v1[1]*v2[1])/(Math.hypot(...v1)*Math.hypot(...v2)+1e-9);return Math.acos(clamp(cos,-1,1))*180/Math.PI}
 const severity=(v,s,d)=>clamp((v-s)/(d-s),0,1);
+function swingLevel(s){if(s&&s.mode==="PITCHING"&&s.snap&&s.snap.elbowH==null)return["측정 부족","idle"];return levelOf(s.scoreMax)}
 function levelOf(score){if(score==null)return["대기","idle"];if(score<25)return["양호","good"];if(score<50)return["관찰","watch"];return["주의","alert"]}
 function median(a){a=a.filter(v=>v!=null&&!Number.isNaN(v)).sort((x,y)=>x-y);if(!a.length)return null;const m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2}
 function pct(a,p){a=[...a].sort((x,y)=>x-y);if(!a.length)return 0;const i=(a.length-1)*p/100,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo)}
@@ -611,7 +612,8 @@ class Analyzer{
         this.prevWr[j]=[kp[j][0],kp[j][1],t]}
       else delete this.prevWr[j];
     }
-    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose,wrX};
+    const wristUp=ok(s.sh,s.wr)?(kp[s.sh][1]-kp[s.wr][1])/torso:null;   /* 던지는 손목이 어깨보다 위(+)/아래(-) */
+    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose,wrX,wristUp};
   }
   severities(m,rec,late){
     const sv={};if(m.tilt!=null)sv.trunk_tilt=severity(m.tilt,...tiltLim(this.mode));
@@ -643,6 +645,8 @@ class Analyzer{
     const r=this.rec;r.last=t;r.confSum+=out.poseConf;r.confN++;
     /* 옆에서 찍었는지: 던지는 손이 화면에서 좌우로 키의 70% 이상 지나가면 옆 촬영(정면 촬영은 손이 위아래로 움직임) */
     if(m.wrX!=null){r.wxMin=Math.min(r.wxMin??m.wrX,m.wrX);r.wxMax=Math.max(r.wxMax??m.wrX,m.wrX);if(r.wxMax-r.wxMin>=.7)r.sideOK=true}if(hint!=null){r.hintT=hint;r.byAudio=true}
+    /* 투구인지: 던지는 손이 어깨 위로 올라갔다가 아래로 내려와야 투구. 공 받기·준비 동작은 이 흐름이 없다 */
+    if(this.mode==="PITCHING"&&m.wristUp!=null){r.wSeen=true;if(m.wristUp>=.1)r.upSeen=true;else if(r.upSeen&&m.wristUp<=-.5)r.thrown=true}
     for(const[k,v,f]of[["tilt_max",m.tilt,Math.max],["knee_min",m.knee,Math.min],["stride_max",m.stride,Math.max],["head_max",m.headSway,Math.max],["elbow_h_min",m.elbowH,Math.min]])
       if(v!=null)r.ext[k]=k in r.ext?f(r.ext[k],v):v;
     /* 공 소리로 잡은 스윙은 소리가 난 순간(콘택트)을 대표 장면으로 고정 */
@@ -663,6 +667,7 @@ class Analyzer{
     const r=this.rec;this.rec=null;if(!r)return;
     if(!r.sideOK)delete r.ext.stride_max;
     if(r.peakSpeed<CFG.speedPeakMin||r.last-r.start<.2)return;
+    if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown){this.nonThrow=(this.nonThrow||0)+1;return}
     /* 공이 있을 때만: 휘두른 순간 앞뒤로 공 소리(타격음·미트 소리)가 없으면 연습 스윙으로 보고 뺀다 */
     if(this.requireBall&&this.mode==="BATTING"&&!r.byAudio&&!this.hints.some(tc=>tc>=r.peakT-.35&&tc<=r.peakT+.6)){this.practice++;return}
     if(r.byAudio)this.lastHit=r.hintT;
@@ -1024,7 +1029,9 @@ function renderResult(complete){
   renderQuality(Q);
   {const n=an.practice||0,el2=$("rTrend");
    if(state.mode==="BATTING"&&an.requireBall&&n)el2.textContent+=` 공 소리가 없는 연습 스윙 ${n}회는 분석에서 뺐어요.`;
-   if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";}
+   if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
+   if(state.mode==="PITCHING"&&an.nonThrow)el2.textContent+=` 던지는 팔 동작이 없는 공 받기·준비 동작 ${an.nonThrow}번은 투구가 아니라서 뺐어요.`;
+   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))el2.textContent+=" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
   ap.textContent=`이 영상의 투구 ${S.n}개를 투구 기록에 추가`;ap.onclick=()=>openLog(S.n);
   $("rN").textContent=S.n;$("rF").textContent=S.flaggedN;$("rS").textContent=S.avg==null?"-":Math.round(S.avg)+"%";
@@ -1035,7 +1042,7 @@ function renderResult(complete){
   else $("rTrend").textContent=S.n?"첫 기록이에요. 다음 분석부터 변화를 비교해 드려요.":"";
 
   const tl=$("rTl");tl.innerHTML="";$("rDur").textContent=fmt(dur);
-  an.swings.forEach(s=>{const b=document.createElement("button");const[lv,k]=levelOf(s.scoreMax);
+  an.swings.forEach(s=>{const b=document.createElement("button");const[lv,k]=swingLevel(s);
     b.style.left=(s.start/dur*100)+"%";b.style.width=`max(8px, ${((s.last-s.start)/dur*100).toFixed(2)}%)`;b.style.background=`var(--${k})`;
     b.setAttribute("aria-label",`동작 ${s.n} ${lv}`);b.onclick=()=>{const el=document.getElementById("sw"+s.n);el?.scrollIntoView({behavior:"smooth",block:"center"});
       document.querySelectorAll(".sw").forEach(x=>x.classList.remove("hl"));el?.classList.add("hl")};tl.appendChild(b)});
@@ -1057,7 +1064,7 @@ function renderResult(complete){
 
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
-  an.swings.forEach(s=>{const[lv,k]=levelOf(s.scoreMax);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
+  an.swings.forEach(s=>{const[lv,k]=swingLevel(s);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
     d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span></div>`;
     g.appendChild(d)});
 
@@ -1107,7 +1114,7 @@ function makeReport(S,complete){
   x.fillStyle=P.ink;x.font=`600 34px ${F}`;x.fillText("대표 동작",84,y0+58);
   [["가장 안정적인 동작",S.best],["가장 주의가 필요한 동작",S.n>1?S.worst:null]].forEach(([t,s],i)=>{
     const bx=84+i*470;x.fillStyle=P.mut;x.font=`26px ${F}`;x.fillText(t,bx,y0+104);
-    if(s&&s.thumb){x.drawImage(s.thumb,bx,y0+124,195,260);const[l2,k2]=levelOf(s.scoreMax);
+    if(s&&s.thumb){x.drawImage(s.thumb,bx,y0+124,195,260);const[l2,k2]=swingLevel(s);
       x.fillStyle=P.ink;x.font=`30px ${FM}`;x.fillText(`#${s.n}`,bx+215,y0+164);
       x.fillStyle=lc(k2);x.font=`800 36px ${FD}`;x.fillText(l2,bx+215,y0+214);
       x.fillStyle=P.mut;x.font=`24px ${F}`;wrapText(x,s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음",bx+215,y0+258,210,32)}
@@ -1143,7 +1150,7 @@ function swingPages(){
       const cx=48+(j%2)*500,cy=190+Math.floor(j/2)*430;
       x.fillStyle=RP.card;x.beginPath();x.roundRect(cx,cy,476,406,18);x.fill();x.strokeStyle=RP.line;x.lineWidth=2;x.stroke();
       if(s.thumb)x.drawImage(s.thumb,cx+16,cy+18,222,296);else{x.fillStyle="#0B1118";x.fillRect(cx+16,cy+18,222,296)}
-      const tx=cx+254,[lv,k]=levelOf(s.scoreMax);
+      const tx=cx+254,[lv,k]=swingLevel(s);
       x.fillStyle=RP.ink;x.font=`34px ${RFM}`;x.fillText(`#${s.n}`,tx,cy+56);
       x.fillStyle=RP.mut;x.font=`22px ${RFM}`;x.fillText(fmt1(s.peakT),tx,cy+88);
       x.fillStyle=RP[k]||RP.idle;x.font=`800 42px ${RFD}`;x.fillText(lv,tx,cy+142);
@@ -1532,6 +1539,9 @@ async function estimateSpeeds(an){
   /* 릴리스 지점은 투구판보다 앞(어린 선수·짧은 거리일수록 보폭이 짧다), 미트는 홈플레이트 뒤 */
   const D=+state.dist,eff=D-(D<=16.5?clamp(D*.09,.6,1.3):1.7)+.3;
   state.speedEff=eff;
+  /* 받는 사람 쪽에서 찍었는지: 던지는 선수가 거리에 비해 너무 크게 보이면 카메라가 선수 가까이 있는 것 → 공 소리가 선수 자신의 글러브 소리라 구속을 잴 수 없다 */
+  {const hs=(state.trackLog||[]).map(e=>e[3]/vid.videoHeight),hr=median(hs),k=vid.videoHeight>vid.videoWidth?1.375:.976,lim=2.2*1.6/(k*D);
+   if(hr!=null&&hr>lim){state.speedErr=`던지는 선수가 화면 높이의 ${Math.round(hr*100)}%로 크게 보여요. 구속은 공을 받는 사람 쪽에서 던지는 선수를 찍어야 계산할 수 있어요(선수 옆이나 가까이서 찍으면 선수 자신의 글러브 소리를 잘못 재요). 받는 사람 쪽에서 찍었다면 거리 설정(${D}m)이 실제보다 먼지 확인해 주세요.`;state.speedCam=true;return}}
   const pops=contactTimes(O,vid.duration);
   try{state.frameTimes=await videoFrameTimes(state.file)}catch(e){state.frameTimes=null}
   const FT=state.frameTimes;state.fps=FT&&FT.length>10?Math.round((FT.length-1)/(FT[FT.length-1]-FT[0])):null;
@@ -1546,6 +1556,11 @@ async function estimateSpeeds(an){
     const fd=state.fps?1/state.fps:(r.frameDur||1/30),err=kmh*(fd/2)/flight;   /* 공 놓는 순간 오차 ≈ 반 프레임 (보간·자세 인식 흔들림 포함) */
     state.throws.push({pop,isThrow:true,rel:r.rel,flight,kmh,err});
   }
+  /* 튀는 값 거르기: 이 나이에서 나오기 어려운 값, 다른 투구들과 30% 넘게 다른 값은 빼고 이유를 보여준다 */
+  {const cap={"7-8":75,"9-10":90,"11-12":105,"13-14":125,"15-16":140,"17-18":155}[curPlayer().age]||130;
+   state.throws.forEach(x=>{if(x.kmh&&x.kmh>cap){x.kmh=null;x.err=`이 나이에서 나오기 어려운 값이라 뺐어요`}});
+   const ok=state.throws.filter(x=>x.kmh),med=median(ok.map(x=>x.kmh));
+   if(ok.length>=3)ok.forEach(x=>{if(x.kmh>med*1.3||x.kmh<med*.7){x.kmh=null;x.err="다른 투구와 너무 달라 뺐어요"}})}
   /* 분석된 동작에 구속 연결, 공을 받는 동작은 투구 목록에서 뺀다 */
   const T=state.throws;
   an.swings.forEach(s=>{const th=T.find(x=>x.kmh&&x.rel>=s.start-.5&&x.rel<=s.last+.3);if(th){s.kmh=th.kmh;s.flight=th.flight;s.release=th.rel}});
@@ -1564,7 +1579,7 @@ function renderSpeed(an){
   $("spN").textContent=`${sp.length}/${nThrow}`;
   const lst=$("spList");lst.innerHTML="";T.filter(x=>x.kmh).forEach((x,i)=>{const e2=document.createElement("span");e2.innerHTML=`<b>${Math.round(x.kmh)}</b> ±${Math.max(1,Math.round(x.err||0))}`;e2.title=`${fmt1(x.pop)} 투구`;lst.appendChild(e2)});
   const errMed=median(T.filter(x=>x.kmh).map(x=>x.err||0));
-  const why={};T.forEach(x=>{if(x.err&&x.isThrow!==false)why[x.err]=(why[x.err]||0)+1});
+  const why={};T.forEach(x=>{if(typeof x.err==="string"&&x.isThrow!==false)why[x.err]=(why[x.err]||0)+1});
   const miss=Object.entries(why).map(([k,v])=>`${k} ${v}개`).join(", ");
   const catches=T.filter(x=>x.isThrow===false).length;
   $("spNote").textContent=state.speedErr||
