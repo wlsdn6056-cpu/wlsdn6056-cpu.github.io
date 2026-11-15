@@ -650,6 +650,8 @@ class Analyzer{
     /* 투구인지: 던지는 손이 어깨 위로 올라갔다가 아래로 내려와야 투구. 공 받기·준비 동작은 이 흐름이 없다 */
     /* 투구 = 손이 어깨 위로 올라갔다가 0.5초 안에 허리 아래로 크게 내려오는 흐름. 뒷모습에서는 좌우 손을 바꿔 찾기도 해서 두 손을 모두 본다.
        공 받기는 글러브가 올라가도 이렇게 깊고 빠르게 내려오지 않는다. 가장 높이 올라간 순간을 공 놓는 순간으로 기억한다 */
+    /* 손목을 AI가 또렷하게(확신 0.4 이상) 본 장면 수를 센다 */
+    if(this.mode==="PITCHING"){r.wN=(r.wN||0)+1;if(person.box[3]-person.box[1]<.15*Math.max(vid.videoWidth,vid.videoHeight))r.sN=(r.sN||0)+1;if((m.wristUp!=null||m.wristUp2!=null)&&Math.max(person.kp[9][2],person.kp[10][2])>=.4)r.wV=(r.wV||0)+1}
     if(this.mode==="PITCHING"&&(m.wristUp!=null||m.wristUp2!=null)){r.wSeen=true;const ups=r.ups||(r.ups=[]);
       const hi=Math.max(m.wristUp??-9,m.wristUp2??-9),lo=Math.min(m.wristUp??9,m.wristUp2??9);
       if(hi>=.1)ups.push([t,hi]);
@@ -674,7 +676,9 @@ class Analyzer{
     const r=this.rec;this.rec=null;if(!r)return;
     if(!r.sideOK)delete r.ext.stride_max;
     if(r.peakSpeed<CFG.speedPeakMin||r.last-r.start<.2)return;
-    if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown)r.notThrow=true;   /* 던지는 팔 흐름이 안 보인 동작: 글러브 소리로 투구가 확인되지 않으면 나중에 뺀다 */
+    /* 선수가 화면에 작게 찍혀(키가 화면의 15% 미만) 손목이 또렷하게 보인 장면이 60% 미만이면 "투구 아님"으로 단정하지 않고 판단을 보류해 남긴다 (너무 짧은 움직임은 제외) */
+    if(this.mode==="PITCHING"&&!r.thrown&&(r.wN||0)>=12&&(r.sN||0)>=.5*(r.wN||1)&&(r.wV||0)<.6*(r.wN||1))r.armUnclear=true;
+    else if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown)r.notThrow=true;   /* 던지는 팔 흐름이 안 보인 동작: 글러브 소리로 투구가 확인되지 않으면 나중에 뺀다 */
     /* 공이 있을 때만: 휘두른 순간 앞뒤로 공 소리(타격음·미트 소리)가 없으면 연습 스윙으로 보고 뺀다 */
     if(this.requireBall&&this.mode==="BATTING"&&!r.byAudio&&!this.hints.some(tc=>tc>=r.peakT-.35&&tc<=r.peakT+.6)){this.practice++;return}
     if(r.byAudio)this.lastHit=r.hintT;
@@ -810,8 +814,8 @@ async function detectAt(L){
   return people(await infer(),(nx,ny)=>[nx*vw,ny*vh]);
 }
 async function detectFull(){return mergePeople([...(await detectAt(384)),...(await detectAt(640))])}
-async function detectCrop(cx,cy,size){
-  const vw=vid.videoWidth,vh=vid.videoHeight,S=256;inCan.width=S;inCan.height=S;
+async function detectCrop(cx,cy,size,S=256){
+  const vw=vid.videoWidth,vh=vid.videoHeight;inCan.width=S;inCan.height=S;
   inCtx.fillStyle="#000";inCtx.fillRect(0,0,S,S);
   const sx=cx-size/2,sy=cy-size/2,k=S/size;
   const ax=Math.max(0,sx),ay=Math.max(0,sy),bx=Math.min(vw,sx+size),by=Math.min(vh,sy+size);
@@ -1011,7 +1015,8 @@ async function scan(){
       /* 3초(45장) 넘게 놓치면 마지막 위치 대신 처음 선택한 자리(타석·마운드)에서만 다시 찾는다 */
       const long=lost>45,base=long?anchor:track;
       const size=clamp(base.h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2);
-      const cands=await detectCrop(base.c[0],base.c[1],size);
+      /* 선수가 작게 찍히면(키가 화면의 15% 미만) AI 입력을 키워 관절을 더 또렷하게 본다 */
+      const cands=await detectCrop(base.c[0],base.c[1],size,base.h<.15*Math.max(vid.videoWidth,vid.videoHeight)?320:256);
       let p=pickSame(cands,base,ref,.45,long?.75:.5);
       if(!p){lost++;
         /* 놓쳤을 때: 마지막 위치나 처음 선택한 위치 근처에서, 옷 색이 같은 사람만 다시 잡는다. 확신이 없으면 그 구간은 건너뛴다 */
@@ -1046,7 +1051,7 @@ async function scan(){
   if(state.mode==="PITCHING"&&!state.cancel){
     /* 공 받기 거르기: 손을 가장 높이 든 순간에 글러브 소리가 났다면 공을 받은 것 (던질 때는 소리가 공이 날아간 뒤에 난다) */
     if(state.O){const pops=contactTimes(state.O,vid.duration),b1=an.swings.length;
-      an.swings=an.swings.filter(s=>{if(s.kmh)return true;const rt=s.relBest?s.relBest[0]:null;return rt==null||!pops.some(p=>p-rt>=-.2&&p-rt<=.05)});   /* 받을 때는 소리가 손을 가장 높이 든 순간이거나 직전, 던질 때는 공이 날아간 뒤 */
+      an.swings=an.swings.filter(s=>{if(s.kmh)return true;const rt=s.relBest?s.relBest[0]:(s.armUnclear?s.peakT:null);return rt==null||!pops.some(p=>p-rt>=-.2&&p-rt<=.05)});   /* 받을 때는 소리가 손을 가장 높이 든 순간이거나 직전, 던질 때는 공이 날아간 뒤 */
       an.catchN=b1-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     if(!(state.throws||[]).some(x=>x.isThrow)){const b0=an.swings.length;an.swings=an.swings.filter(s=>!s.notThrow);an.nonThrow=b0-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     await resnapAtRelease(an);
@@ -1070,7 +1075,8 @@ function renderResult(complete){
    if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
    if(state.mode==="PITCHING"&&an.catchN)el2.textContent+=` 손을 든 순간 글러브 소리가 난 공 받기 동작 ${an.catchN}번은 투구가 아니라서 뺐어요.`;
    if(state.mode==="PITCHING"&&an.nonThrow)el2.textContent+=` 던지는 팔 동작이 없는 공 받기·준비 동작 ${an.nonThrow}번은 투구가 아니라서 뺐어요.`;
-   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))el2.textContent+=an.swings.some(s=>s.badPose)?" '측정 부족' 동작은 공 놓는 순간 AI가 관절을 제대로 찾지 못해(빠른 동작·뒷모습 등) 판정하지 않았어요.":" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
+   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))if(an.swings.some(s=>s.smallArm))el2.textContent+=" 선수가 화면에 작게 찍혀 팔 동작을 또렷하게 못 본 동작은 '측정 부족'으로 남겼어요. 삼각대에 두고 2~3배 줌으로 선수를 크게 찍으면 더 정확해요.";
+   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null&&!s.smallArm))el2.textContent+=an.swings.some(s=>s.badPose&&!s.smallArm)?" '측정 부족' 동작은 공 놓는 순간 AI가 관절을 제대로 찾지 못해(빠른 동작·뒷모습 등) 판정하지 않았어요.":" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
   ap.textContent=`이 영상의 투구 ${S.n}개를 투구 기록에 추가`;ap.onclick=()=>openLog(S.n);
   $("rN").textContent=S.n;$("rF").textContent=S.flaggedN;$("rS").textContent=S.avg==null?"-":Math.round(S.avg)+"%";
@@ -1553,6 +1559,11 @@ async function resnapAtRelease(an){
         continue}}
     if(rel==null){const P=PL.filter(e=>e.t>=s.peakT-.4&&e.t<=s.peakT+.05&&e.kp[hs.wr][2]>.3&&e.kp[hs.sh][2]>.3&&e.kp[hs.wr][1]<e.kp[hs.sh][1]);
       if(P.length)rel=P.reduce((a,b)=>b.kp[hs.wr][1]<a.kp[hs.wr][1]?b:a).t}
+    if(rel==null&&s.armUnclear){/* 선수가 작거나 흐려 팔 동작을 또렷하게 못 봄 → 자세 판정 없이 '측정 부족'으로 남긴다 */
+      let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.peakT);if(dd<bd){bd=dd;q=e2}}
+      s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.smallArm=true;s.flags=[];
+      if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
+      continue}
     if(rel==null)continue;
     if(Tref===undefined){const ts=PL.filter(q=>[5,6,11,12].every(i=>q.kp[i][2]>=CFG.kpConf)).map(q=>Math.hypot((q.kp[5][0]+q.kp[6][0])/2-(q.kp[11][0]+q.kp[12][0])/2,(q.kp[5][1]+q.kp[6][1])/2-(q.kp[11][1]+q.kp[12][1])/2));Tref=ts.length>=10?pct(ts,75):null}
     const near=PL.filter(q=>Math.abs(q.t-rel)<=.1).sort((a,b)=>Math.abs(a.t-rel)-Math.abs(b.t-rel));if(!near.length)continue;
@@ -1580,7 +1591,7 @@ async function resnapAtRelease(an){
 }
 function trackNear(t){let best=null,bd=1.5;for(const e of state.trackLog||[]){const d=Math.abs(e[0]-t);if(d<bd){bd=d;best=e}}return best}
 async function poseNear(t,c,h){
-  await seekTo(t);const ps=await detectCrop(c[0],c[1],clamp(h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2));
+  await seekTo(t);const ps=await detectCrop(c[0],c[1],clamp(h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2),h<.15*Math.max(vid.videoWidth,vid.videoHeight)?320:256);
   let p=null,bd=h*.5;for(const q of ps){const d=Math.hypot(center(q.box)[0]-c[0],center(q.box)[1]-c[1]);if(d<bd){bd=d;p=q}}return p;
 }
 async function throwBefore(pop){
