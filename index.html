@@ -651,7 +651,7 @@ class Analyzer{
     /* 투구 = 손이 어깨 위로 올라갔다가 0.5초 안에 허리 아래로 크게 내려오는 흐름. 뒷모습에서는 좌우 손을 바꿔 찾기도 해서 두 손을 모두 본다.
        공 받기는 글러브가 올라가도 이렇게 깊고 빠르게 내려오지 않는다. 가장 높이 올라간 순간을 공 놓는 순간으로 기억한다 */
     /* 손목을 AI가 또렷하게(확신 0.4 이상) 본 장면 수를 센다 */
-    if(this.mode==="PITCHING"){r.wN=(r.wN||0)+1;if(person.box[3]-person.box[1]<.15*Math.max(vid.videoWidth,vid.videoHeight))r.sN=(r.sN||0)+1;if((m.wristUp!=null||m.wristUp2!=null)&&Math.max(person.kp[9][2],person.kp[10][2])>=.4)r.wV=(r.wV||0)+1}
+    if(this.mode==="PITCHING"){const pk=person.kp;(r.vis||(r.vis=[])).push([t,pk[6][2]>.3&&pk[10][2]>.3,pk[5][2]>.3&&pk[9][2]>.3]);r.wN=(r.wN||0)+1;if(person.box[3]-person.box[1]<.15*Math.max(vid.videoWidth,vid.videoHeight))r.sN=(r.sN||0)+1;if((m.wristUp!=null||m.wristUp2!=null)&&Math.max(person.kp[9][2],person.kp[10][2])>=.4)r.wV=(r.wV||0)+1}
     if(this.mode==="PITCHING"&&(m.wristUp!=null||m.wristUp2!=null)){r.wSeen=true;const ups=r.ups||(r.ups=[]);
       const hi=Math.max(m.wristUp??-9,m.wristUp2??-9),lo=Math.min(m.wristUp??9,m.wristUp2??9);
       if(hi>=.1)ups.push([t,hi]);
@@ -677,7 +677,10 @@ class Analyzer{
     if(!r.sideOK)delete r.ext.stride_max;
     if(r.peakSpeed<CFG.speedPeakMin||r.last-r.start<.2)return;
     /* 선수가 화면에 작게 찍혀(키가 화면의 15% 미만) 손목이 또렷하게 보인 장면이 60% 미만이면 "투구 아님"으로 단정하지 않고 판단을 보류해 남긴다 (너무 짧은 움직임은 제외) */
-    if(this.mode==="PITCHING"&&!r.thrown&&(r.wN||0)>=12&&(r.sN||0)>=.5*(r.wN||1)&&(r.wV||0)<.6*(r.wN||1))r.armUnclear=true;
+    /* 공을 놓는 순간 팔이 너무 빨라 흐려지면 AI가 그 손을 놓친다 → 큰 동작인데 가장 빠른 순간 앞뒤로 한쪽 손이 60% 이상 안 보이면 "투구 아님"으로 단정하지 않는다 */
+    const vw=(r.vis||[]).filter(v=>v[0]>=r.peakT-.4&&v[0]<=r.peakT+.3),blur=vw.length>=6&&Math.max(vw.filter(v=>!v[1]).length,vw.filter(v=>!v[2]).length)>=.6*vw.length;
+    if(this.mode==="PITCHING"&&!r.thrown&&r.last-r.start>=.8&&r.peakSpeed>=3&&blur)r.armUnclear=true;
+    else if(this.mode==="PITCHING"&&!r.thrown&&(r.wN||0)>=12&&(r.sN||0)>=.5*(r.wN||1)&&(r.wV||0)<.6*(r.wN||1))r.armUnclear=true;
     else if(this.mode==="PITCHING"&&r.wSeen&&!r.thrown)r.notThrow=true;   /* 던지는 팔 흐름이 안 보인 동작: 글러브 소리로 투구가 확인되지 않으면 나중에 뺀다 */
     /* 공이 있을 때만: 휘두른 순간 앞뒤로 공 소리(타격음·미트 소리)가 없으면 연습 스윙으로 보고 뺀다 */
     if(this.requireBall&&this.mode==="BATTING"&&!r.byAudio&&!this.hints.some(tc=>tc>=r.peakT-.35&&tc<=r.peakT+.6)){this.practice++;return}
@@ -1054,7 +1057,13 @@ async function scan(){
   if(state.mode==="PITCHING"&&!state.cancel){
     /* 공 받기 거르기: 손을 가장 높이 든 순간에 글러브 소리가 났다면 공을 받은 것 (던질 때는 소리가 공이 날아간 뒤에 난다) */
     if(state.O){const pops=contactTimes(state.O,vid.duration),b1=an.swings.length;
-      an.swings=an.swings.filter(s=>{if(s.kmh)return true;const rt=s.relBest?s.relBest[0]:(s.armUnclear?s.peakT:null);return rt==null||!pops.some(p=>p-rt>=-.2&&p-rt<=.05)});   /* 받을 때는 소리가 손을 가장 높이 든 순간이거나 직전, 던질 때는 공이 날아간 뒤 */
+      /* 글러브 소리가 난 순간 손이 어깨보다 훨씬 위에 있으면 공을 받는 중이다. 던질 때는 공이 포수 글러브에 닿는 순간 투수의 손은 이미 아래로 내려와 있다 */
+      const handUp=p=>{const v=[];for(const q of state.poseLog){if(Math.abs(q.t-p)>.1)continue;const k=q.kp,T=Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1;let b=null;
+        for(const[sh,wr]of[[5,9],[6,10]])if(k[sh][2]>.3&&k[wr][2]>.3){const u=(k[sh][1]-k[wr][1])/T;if(b==null||u>b)b=u}if(b!=null)v.push(b)}
+        return v.length?median(v):null};
+      an.swings=an.swings.filter(s=>{if(s.kmh)return true;const rt=s.relBest?s.relBest[0]:(s.armUnclear?s.peakT:null);
+        if(rt!=null&&pops.some(p=>p-rt>=-.2&&p-rt<=.05))return false;
+        return !pops.some(p=>p>=s.start-.6&&p<=s.peakT+.1&&(handUp(p)??-9)>=.45)});   /* 받을 때는 소리가 손을 가장 높이 든 순간이거나 직전, 던질 때는 공이 날아간 뒤 */
       an.catchN=b1-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     if(!(state.throws||[]).some(x=>x.isThrow)){const b0=an.swings.length;an.swings=an.swings.filter(s=>!s.notThrow);an.nonThrow=b0-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     await resnapAtRelease(an);
@@ -1078,7 +1087,7 @@ function renderResult(complete){
    if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
    if(state.mode==="PITCHING"&&an.catchN)el2.textContent+=` 손을 든 순간 글러브 소리가 난 공 받기 동작 ${an.catchN}번은 투구가 아니라서 뺐어요.`;
    if(state.mode==="PITCHING"&&an.nonThrow)el2.textContent+=` 던지는 팔 동작이 없는 공 받기·준비 동작 ${an.nonThrow}번은 투구가 아니라서 뺐어요.`;
-   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))if(an.swings.some(s=>s.smallArm))el2.textContent+=" 선수가 화면에 작게 찍혀 팔 동작을 또렷하게 못 본 동작은 '측정 부족'으로 남겼어요. 삼각대에 두고 2~3배 줌으로 선수를 크게 찍으면 더 정확해요.";
+   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))if(an.swings.some(s=>s.smallArm))el2.textContent+=" 팔 동작을 또렷하게 못 본 동작(선수가 작게 찍혔거나 공 놓는 순간 팔이 흐려짐)은 '측정 부족'으로 남겼어요. 삼각대에 두고 선수를 크게, 밝은 곳에서 찍으면 더 정확해요.";
    if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null&&!s.smallArm))el2.textContent+=an.swings.some(s=>s.badPose&&!s.smallArm)?" '측정 부족' 동작은 공 놓는 순간 AI가 관절을 제대로 찾지 못해(빠른 동작·뒷모습 등) 판정하지 않았어요.":" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
   ap.textContent=`이 영상의 투구 ${S.n}개를 투구 기록에 추가`;ap.onclick=()=>openLog(S.n);
