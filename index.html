@@ -791,8 +791,11 @@ async function autoFind(){
 
 /* --- 영상 --- */
 function seekTo(t){return new Promise(res=>{
-  let done=false;const fin=()=>{if(done)return;done=true;vid.removeEventListener("seeked",fin);clearTimeout(to);res()};
-  const to=setTimeout(fin,3000);vid.addEventListener("seeked",fin);vid.currentTime=t;})}
+  /* 아이폰(사파리)은 'seeked' 신호가 와도 화면 그림이 아직 이전 장면일 때가 있다 → 새 장면이 실제로 그려진 뒤(requestVideoFrameCallback)에 넘어간다.
+     그렇지 않으면 사진은 다른 순간인데 관절선은 원래 순간 것이 그려져 서로 어긋난다 */
+  let done=false;const fin=()=>{if(done)return;done=true;vid.removeEventListener("seeked",onS);clearTimeout(to);res()};
+  const onS=()=>{if(vid.requestVideoFrameCallback){const t2=setTimeout(fin,150);vid.requestVideoFrameCallback(()=>{clearTimeout(t2);fin()})}else requestAnimationFrame(()=>requestAnimationFrame(fin))};
+  const to=setTimeout(fin,3000);vid.addEventListener("seeked",onS);vid.currentTime=t;})}
 function waitEvent(ev,ms=8000){return new Promise(res=>{let to;const f=()=>{clearTimeout(to);vid.removeEventListener(ev,f);res(true)};
   to=setTimeout(()=>{vid.removeEventListener(ev,f);res(false)},ms);vid.addEventListener(ev,f)})}
 
