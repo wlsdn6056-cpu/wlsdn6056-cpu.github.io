@@ -1060,6 +1060,7 @@ async function scan(){
     an.flush();
   }
   try{await wakeLock?.release()}catch{}
+  if(state.mode==="BATTING"&&an.swings.length&&!state.cancel)await makePhases(an);
   if(state.mode==="PITCHING"&&+state.dist>0&&an.swings.length&&!state.cancel)await estimateSpeeds(an);
   if(state.mode==="PITCHING"&&!state.cancel){
     /* 공 받기 거르기: 손을 가장 높이 든 순간에 글러브 소리가 났다면 공을 받은 것 (던질 때는 소리가 공이 날아간 뒤에 난다) */
@@ -1623,6 +1624,22 @@ async function makePhases(an){
     T=k=>Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1;
   for(const s of an.swings){
     if(state.cancel)return;
+    if(state.mode==="BATTING"){
+      /* 타격 단계: 준비 자세 → 스트라이드(앞발 들기) → 콘택트 → 팔로스루 */
+      const tc=s.peakT,near=(t,a,b)=>{let q=null,bd=9;for(const e of PL){if(e.t<a||e.t>b||!okT(e.kp))continue;const d=Math.abs(e.t-t);if(d<bd){bd=d;q=e}}return q};
+      const st=near(s.start-.35,s.start-1.2,s.start-.05);
+      let sd=null,sv=.08;   /* 한쪽 발목이 다른 발목보다 몸통 길이의 8% 이상 들린 순간 중 가장 높이 든 장면 */
+      for(const q of PL){if(q.t<s.start-1.2||q.t>tc-.05)continue;const k=q.kp;if(!okT(k)||k[15][2]<.3||k[16][2]<.3)continue;const v=Math.abs(k[15][1]-k[16][1])/T(k);if(v>sv){sv=v;sd=q}}
+      let ft=null,fv=-9;
+      for(const q of PL){if(q.t<tc+.15||q.t>tc+.8)continue;const k=q.kp;if(!okT(k))continue;const t=T(k);
+        for(const[sh,wr]of[[5,9],[6,10]])if(k[wr][2]>=.3){const v=(k[sh][1]-k[wr][1])/t;if(v>fv){fv=v;ft=q}}}
+      if(!ft)ft=near(tc+.4,tc+.15,tc+.8);
+      s.phases=[];
+      for(const[l,q]of[["준비 자세",st],["스트라이드",sd],["콘택트","c"],["팔로스루",ft]]){
+        if(q==="c"){s.phases.push({l,thumb:s.thumb||null});continue}
+        if(!q){s.phases.push({l,thumb:null});continue}
+        try{await seekTo(q.t);s.phases.push({l,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
+      continue}
     const rel=s.snapT;if(rel==null)continue;
     let kh=null,kv=-9,leg=null;
     for(const q of PL){if(q.t<rel-2||q.t>rel-.15)continue;const k=q.kp;if(!okT(k))continue;const t=T(k);
