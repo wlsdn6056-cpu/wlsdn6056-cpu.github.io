@@ -487,6 +487,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <li><b>그물 없이</b>카메라와 선수 사이에 그물이 있으면 인식이 크게 떨어져요. 그물 틈에 렌즈를 대거나 그물 밖 옆쪽에서 찍어요.</li>
         <li><b>매번 같은 자리에서</b>같은 위치와 거리에서 찍어야 지난 기록과 비교가 정확해요.</li>
         <li><b>밝게, 선수 한 명만</b>역광을 피하고, 다른 사람이 선수 앞을 지나가지 않게 해요.</li>
+        <li><b>뒤에서 찍지 않기</b>선수 등 뒤에서 찍으면 AI가 왼쪽·오른쪽 팔다리를 헷갈리기 쉬워요. 투구는 옆이나 받는 사람 쪽에서 찍어주세요.</li>
       </ul>
     </details>
     <div class="card gcard">
@@ -613,7 +614,8 @@ class Analyzer{
       else delete this.prevWr[j];
     }
     const wristUp=ok(s.sh,s.wr)?(kp[s.sh][1]-kp[s.wr][1])/torso:null;   /* 던지는 손목이 어깨보다 위(+)/아래(-) */
-    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose,wrX,wristUp};
+    const wristUp2=ok(l.sh,l.wr)?(kp[l.sh][1]-kp[l.wr][1])/torso:null;   /* 반대쪽 손목 (뒷모습에서는 AI가 좌우를 바꿔 찾기도 해서 같이 본다) */
+    return{backElbow,elbowH,tilt,knee,stride,headSway,speed,arm,view,nose,wrX,wristUp,wristUp2};
   }
   severities(m,rec,late){
     const sv={};if(m.tilt!=null)sv.trunk_tilt=severity(m.tilt,...tiltLim(this.mode));
@@ -646,7 +648,12 @@ class Analyzer{
     /* 옆에서 찍었는지: 던지는 손이 화면에서 좌우로 키의 70% 이상 지나가면 옆 촬영(정면 촬영은 손이 위아래로 움직임) */
     if(m.wrX!=null){r.wxMin=Math.min(r.wxMin??m.wrX,m.wrX);r.wxMax=Math.max(r.wxMax??m.wrX,m.wrX);if(r.wxMax-r.wxMin>=.7)r.sideOK=true}if(hint!=null){r.hintT=hint;r.byAudio=true}
     /* 투구인지: 던지는 손이 어깨 위로 올라갔다가 아래로 내려와야 투구. 공 받기·준비 동작은 이 흐름이 없다 */
-    if(this.mode==="PITCHING"&&m.wristUp!=null){r.wSeen=true;if(m.wristUp>=.1)r.upSeen=true;else if(r.upSeen&&m.wristUp<=-.5)r.thrown=true}
+    /* 투구 = 손이 어깨 위로 올라갔다가 0.5초 안에 허리 아래로 크게 내려오는 흐름. 뒷모습에서는 좌우 손을 바꿔 찾기도 해서 두 손을 모두 본다.
+       공 받기는 글러브가 올라가도 이렇게 깊고 빠르게 내려오지 않는다. 가장 높이 올라간 순간을 공 놓는 순간으로 기억한다 */
+    if(this.mode==="PITCHING"&&(m.wristUp!=null||m.wristUp2!=null)){r.wSeen=true;const ups=r.ups||(r.ups=[]);
+      const hi=Math.max(m.wristUp??-9,m.wristUp2??-9),lo=Math.min(m.wristUp??9,m.wristUp2??9);
+      if(hi>=.1)ups.push([t,hi]);
+      if(lo<=-.9){const c=ups.filter(u=>u[0]<t&&t-u[0]<=.5);if(c.length){r.thrown=true;const b=c.reduce((x,y)=>y[1]>x[1]?y:x);if(!r.relBest||b[1]>r.relBest[1])r.relBest=b}}}
     for(const[k,v,f]of[["tilt_max",m.tilt,Math.max],["knee_min",m.knee,Math.min],["stride_max",m.stride,Math.max],["head_max",m.headSway,Math.max],["elbow_h_min",m.elbowH,Math.min]])
       if(v!=null)r.ext[k]=k in r.ext?f(r.ext[k],v):v;
     /* 공 소리로 잡은 스윙은 소리가 난 순간(콘택트)을 대표 장면으로 고정 */
@@ -826,16 +833,39 @@ function drawSkeleton(ctx,kp,valid,s,color,lw=3){
 }
 function pixelateFaces(ctx,list,s){
   for(const p of list){
-    const pts=p.kp.slice(0,5).filter(q=>q[2]>.25);const bh=p.box[3]-p.box[1];let cx,cy,h;
-    if(pts.length){cx=pts.reduce((a,q)=>a+q[0],0)/pts.length;cy=pts.reduce((a,q)=>a+q[1],0)/pts.length;
-      h=Math.max(.09*bh,.9*Math.max(...pts.map(q=>q[0]))-.9*Math.min(...pts.map(q=>q[0])))}
-    else{cx=(p.box[0]+p.box[2])/2;cy=p.box[1]+.08*bh;h=.09*bh}
-    const x=Math.round((cx-h)*s),y=Math.round((cy-h)*s),w=Math.round(2*h*s),hh=Math.round(2.2*h*s);
+    /* 얼굴 가리기: AI가 찾은 눈·코·귀 위치가 빗나갈 수 있어서, 얼굴 점들 전체를 덮는 범위 + 어깨에서 어림한 머리 위치를 모두 가린다 */
+    const kq=p.kp,pts=kq.slice(0,5).filter(q=>q[2]>.25),bh=p.box[3]-p.box[1],R=[],u=.09*bh;
+    if(pts.length){const xs=pts.map(q=>q[0]),ys=pts.map(q=>q[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+      if(x1-x0<.5*bh&&y1-y0<.5*bh)R.push([(x0+x1)/2,(y0+y1)/2,Math.max(u,(x1-x0)/2+.06*bh),Math.max(u,(y1-y0)/2+.07*bh)]);
+      else pts.forEach(q=>R.push([q[0],q[1],u,u*1.1]))}
+    if(kq[5][2]>.25&&kq[6][2]>.25){const ms=[(kq[5][0]+kq[6][0])/2,(kq[5][1]+kq[6][1])/2];let hc;
+      if(kq[11][2]>.25&&kq[12][2]>.25){const mh=[(kq[11][0]+kq[12][0])/2,(kq[11][1]+kq[12][1])/2];hc=[ms[0]+(ms[0]-mh[0])*.42,ms[1]+(ms[1]-mh[1])*.42]}
+      else{const sw=Math.hypot(kq[5][0]-kq[6][0],kq[5][1]-kq[6][1]);hc=[ms[0],ms[1]-.7*sw]}
+      R.push([hc[0],hc[1],u*1.15,u*1.3])}
+    if(!R.length)R.push([(p.box[0]+p.box[2])/2,p.box[1]+.1*bh,u*1.3,u*1.4]);
+    for(const[cx,cy,hx,hy]of R){
+    const x=Math.round((cx-hx)*s),y=Math.round((cy-hy)*s),w=Math.round(2*hx*s),hh=Math.round(2*hy*s);
     if(w<4||hh<4)continue;
     try{const img=ctx.getImageData(x,y,w,hh);const tmp=document.createElement("canvas");tmp.width=Math.max(1,w>>3);tmp.height=Math.max(1,hh>>3);
       const tc=tmp.getContext("2d");const t2=document.createElement("canvas");t2.width=w;t2.height=hh;t2.getContext("2d").putImageData(img,0,0);
       tc.drawImage(t2,0,0,tmp.width,tmp.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(tmp,0,0,tmp.width,tmp.height,x,y,w,hh);ctx.imageSmoothingEnabled=true}catch{}
+    }
   }
+}
+/* 뼈대가 사람 몸으로 말이 되는지: 빠른 동작·뒷모습에서 AI가 관절을 엉뚱하게 찍은 장면을 걸러낸다 */
+function poseSane(kp,box,Tref){
+  /* 기준 길이: 이 선수의 평소 몸통 길이(Tref). 공 놓는 순간 몸을 숙이면 화면 속 몸통이 짧아지므로 그 장면의 몸통 대신 평소 길이로 팔다리를 비교한다 */
+  const ok=i=>kp[i][2]>=CFG.kpConf,d=(a,b)=>Math.hypot(kp[a][0]-kp[b][0],kp[a][1]-kp[b][1]);
+  if(!(ok(5)&&ok(6)&&ok(11)&&ok(12)))return false;
+  const ms=[(kp[5][0]+kp[6][0])/2,(kp[5][1]+kp[6][1])/2],mh=[(kp[11][0]+kp[12][0])/2,(kp[11][1]+kp[12][1])/2],T0=Math.hypot(ms[0]-mh[0],ms[1]-mh[1]),bh=box[3]-box[1],bw=box[2]-box[0];
+  const T=Tref||T0;
+  if(T0<.35*T||T0<.1*bh||mh[1]<=ms[1]-.1*T)return false;
+  if(d(5,6)>1.45*T||d(11,12)>1.1*T)return false;
+  for(const[a,b,lo,hi]of[[5,7,.2,1.25],[6,8,.2,1.25],[7,9,.15,1.25],[8,10,.15,1.25],[11,13,.3,1.5],[12,14,.3,1.5],[13,15,.25,1.5],[14,16,.25,1.5]])
+    if(ok(a)&&ok(b)){const l=d(a,b);if(l<lo*T||l>hi*T)return false}
+  for(const[h,k]of[[11,13],[12,14]])if(ok(h)&&ok(k)&&kp[k][1]<kp[h][1]-.25*T)return false;
+  const ex=.2*Math.max(bw,bh);for(let i=0;i<17;i++)if(ok(i)&&(kp[i][0]<box[0]-ex||kp[i][0]>box[2]+ex||kp[i][1]<box[1]-ex||kp[i][1]>box[3]+ex))return false;
+  return true;
 }
 function makeThumb(box,kp,valid,blur){
   const bw=box[2]-box[0],bh=box[3]-box[1],vw=vid.videoWidth,vh=vid.videoHeight;
@@ -1035,7 +1065,7 @@ function renderResult(complete){
    if(state.mode==="BATTING"&&an.requireBall&&n)el2.textContent+=` 공 소리가 없는 연습 스윙 ${n}회는 분석에서 뺐어요.`;
    if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
    if(state.mode==="PITCHING"&&an.nonThrow)el2.textContent+=` 던지는 팔 동작이 없는 공 받기·준비 동작 ${an.nonThrow}번은 투구가 아니라서 뺐어요.`;
-   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))el2.textContent+=" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
+   if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))el2.textContent+=an.swings.some(s=>s.badPose)?" '측정 부족' 동작은 공 놓는 순간 AI가 관절을 제대로 찾지 못해(빠른 동작·뒷모습 등) 판정하지 않았어요.":" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
   ap.textContent=`이 영상의 투구 ${S.n}개를 투구 기록에 추가`;ap.onclick=()=>openLog(S.n);
   $("rN").textContent=S.n;$("rF").textContent=S.flaggedN;$("rS").textContent=S.avg==null?"-":Math.round(S.avg)+"%";
@@ -1503,22 +1533,38 @@ async function refineRelease(pop,ctr){
 }
 /* 투구 판정은 공을 놓는 순간 자세로: 손목 속도가 가장 빠른 순간(이미 팔이 내려온 뒤) 대신, 공 놓는 순간의 팔꿈치·몸통·무릎을 다시 재고 대표 장면도 그 순간으로 바꾼다 */
 async function resnapAtRelease(an){
-  const hs=SIDE[state.hand],ls=SIDE[state.hand==="R"?"L":"R"],PL=state.poseLog||[];if(!PL.length)return;
+  const hs=SIDE[state.hand],ls=SIDE[state.hand==="R"?"L":"R"],PL=state.poseLog||[];if(!PL.length)return;let Tref;
   for(const s of an.swings){
     if(state.cancel)return;
     let rel=s.release;
+    /* 실시간 분석의 손목 값은 떨림 필터 때문에 한 박자 늦다 → 기억한 순간 직전 0.2초의 원래 관절 위치에서 손이 가장 높은 장면을 다시 고른다 */
+    if(rel==null&&s.relBest){let bv=-9;
+      for(const q of PL){if(q.t<s.relBest[0]-.2||q.t>s.relBest[0]+.05)continue;const k=q.kp;
+        for(const[sh,wr]of[[5,9],[6,10]])if(k[sh][2]>.3&&k[wr][2]>.3){const T=Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1,v=(k[sh][1]-k[wr][1])/T;if(v>bv){bv=v;rel=q.t}}}
+      if(bv<.25){/* 손이 어깨 위로 올라간 장면을 못 찾음 = 공 놓는 순간이 흐리거나 가려짐 → 엉뚱한 장면으로 판정하지 않는다 */
+        let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.relBest[0]);if(dd<bd){bd=dd;q=e2}}
+        s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.flags=[];
+        if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
+        continue}}
     if(rel==null){const P=PL.filter(e=>e.t>=s.peakT-.4&&e.t<=s.peakT+.05&&e.kp[hs.wr][2]>.3&&e.kp[hs.sh][2]>.3&&e.kp[hs.wr][1]<e.kp[hs.sh][1]);
       if(P.length)rel=P.reduce((a,b)=>b.kp[hs.wr][1]<a.kp[hs.wr][1]?b:a).t}
     if(rel==null)continue;
-    let e=null,bd=.07;for(const q of PL){const d=Math.abs(q.t-rel);if(d<bd){bd=d;e=q}}if(!e)continue;
+    if(Tref===undefined){const ts=PL.filter(q=>[5,6,11,12].every(i=>q.kp[i][2]>=CFG.kpConf)).map(q=>Math.hypot((q.kp[5][0]+q.kp[6][0])/2-(q.kp[11][0]+q.kp[12][0])/2,(q.kp[5][1]+q.kp[6][1])/2-(q.kp[11][1]+q.kp[12][1])/2));Tref=ts.length>=10?pct(ts,75):null}
+    const near=PL.filter(q=>Math.abs(q.t-rel)<=.1).sort((a,b)=>Math.abs(a.t-rel)-Math.abs(b.t-rel));if(!near.length)continue;
+    let e=near.find(q=>poseSane(q.kp,q.box,Tref));
+    if(!e){const q=near[0];s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.snapT=q.t;s.badPose=true;s.flags=[];
+      try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
+      continue}
     const kp=e.kp,ok=(...ids)=>ids.every(i=>kp[i][2]>=CFG.kpConf);if(!ok(5,6,11,12))continue;
     const ms=[(kp[5][0]+kp[6][0])/2,(kp[5][1]+kp[6][1])/2],mh=[(kp[11][0]+kp[12][0])/2,(kp[11][1]+kp[12][1])/2],torso=Math.hypot(ms[0]-mh[0],ms[1]-mh[1]);if(torso<6)continue;
     const side=Math.hypot(kp[5][0]-kp[6][0],kp[5][1]-kp[6][1])/torso<=CFG.viewSideMax;
+    /* 공 놓는 순간 더 높이 든 손이 던지는 손 (뒷모습에서 AI가 좌우를 바꿔도 맞게 잰다) */
+    let th=hs,tl=ls;if(ok(5,6,9,10)){const ua=kp[5][1]-kp[9][1],ub=kp[6][1]-kp[10][1];if(Math.abs(ua-ub)>.3*torso){th=ua>ub?SIDE.L:SIDE.R;tl=ua>ub?SIDE.R:SIDE.L}}
     const sn=s.snap||{};
-    if(ok(hs.sh,hs.el))sn.elbowH=(kp[hs.sh][1]-kp[hs.el][1])/torso;
+    if(ok(th.sh,th.el))sn.elbowH=(kp[th.sh][1]-kp[th.el][1])/torso;
     sn.tilt=side?null:Math.abs(Math.atan2(ms[0]-mh[0],mh[1]-ms[1])*180/Math.PI);
-    if(ok(ls.hip,ls.kn,ls.an))sn.knee=angle3(kp[ls.hip],kp[ls.kn],kp[ls.an]);
-    if(ok(hs.sh,hs.el,hs.wr))sn.elbow=angle3(kp[hs.sh],kp[hs.el],kp[hs.wr]);
+    if(ok(tl.hip,tl.kn,tl.an))sn.knee=angle3(kp[tl.hip],kp[tl.kn],kp[tl.an]);
+    if(ok(th.sh,th.el,th.wr))sn.elbow=angle3(kp[th.sh],kp[th.el],kp[th.wr]);
     s.snap=sn;s.snapT=e.t;
     const sv={};if(sn.tilt!=null)sv.trunk_tilt=severity(sn.tilt,...tiltLim("PITCHING"));if(sn.knee!=null)sv.knee_flex=severity(sn.knee,...LIMITS.knee_flex);
     if(sn.elbowH!=null)sv.elbow_drop=severity(sn.elbowH,...LIMITS.elbow_drop);
