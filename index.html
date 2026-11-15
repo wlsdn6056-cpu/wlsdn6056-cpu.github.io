@@ -182,7 +182,14 @@ td.r{color:var(--muted);font-size:.8rem;text-align:right;white-space:nowrap;padd
 .sw img{width:100%;aspect-ratio:3/4;object-fit:cover;background:var(--stage);display:block}
 .sw .meta{padding:8px 10px;display:flex;flex-direction:column;gap:2px;font-size:.82rem}
 .sw .row{display:flex;justify-content:space-between;align-items:center;gap:6px}
-.pill{font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:999px;color:#fff}
+.pill{font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:999px;color:#fff;white-space:nowrap;flex:none}
+.sw .ph{display:none;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;background:var(--stage)}
+.sw .ph figure{margin:0;position:relative}
+.sw .ph img{aspect-ratio:3/4}
+.sw .ph .none{aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;color:#8A96A3;font-size:.68rem;text-align:center;padding:4px}
+.sw .ph figcaption{position:absolute;left:0;right:0;bottom:0;font-size:.66rem;color:#fff;background:rgba(0,0,0,.55);text-align:center;padding:2px 0}
+.sw.open{grid-column:1/-1}.sw.open .ph{display:grid}.sw.open>img{display:none}
+.sw .phbtn{align-self:flex-start;margin-top:4px;font:inherit;font-size:.76rem;font-weight:600;color:var(--accent);background:none;border:0;padding:2px 0;cursor:pointer}
 .tips{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
 .report img{border-radius:10px;border:1px solid var(--line);width:100%}
 .share{display:flex;flex-direction:column;gap:10px}
@@ -1067,6 +1074,7 @@ async function scan(){
       an.catchN=b1-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     if(!(state.throws||[]).some(x=>x.isThrow)){const b0=an.swings.length;an.swings=an.swings.filter(s=>!s.notThrow);an.nonThrow=b0-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     await resnapAtRelease(an);
+    if(!state.cancel)await makePhases(an);
   }
   const complete=!state.cancel;state.cancel=false;
   renderResult(complete);
@@ -1108,6 +1116,8 @@ function renderResult(complete){
   const dot=sv=>sv==null?"":`<span class="dot" style="background:var(--${sv<.25?"good":sv<.5?"watch":"alert"})"></span>`;
   if(state.mode==="PITCHING")rows.push(["팔꿈치 높이(어깨 대비)",M.elbowH==null?null:`${M.elbowH>=0?"+":""}${Math.round(M.elbowH*100)}%`,`≥ ${L.elbow_drop[0]*100}%`,M.elbowH==null?null:severity(M.elbowH,...L.elbow_drop)]);
   rows.push([`몸통 측방 기울기(${state.mode==="BATTING"?"콘택트":"릴리스"})`,M.tilt==null?null:`${Math.round(M.tilt)}°`,`≤ ${tiltLim(state.mode)[0]}°`,M.tilt==null?null:severity(M.tilt,...tiltLim(state.mode))]);
+  if(state.mode==="PITCHING"){const A=median(an.swings.map(s=>s.snap&&s.snap.abd).filter(v=>v!=null));
+    rows.push(["어깨 각도(앞발 착지)",A==null?null:`${Math.round(A)}°`,"90~100°",A==null?null:Math.max(severity(A,80,65),severity(A,110,125))])}
   if(state.mode==="PITCHING")rows.push(["앞무릎 각도",M.knee==null?null:`${Math.round(M.knee)}°`,`≥ ${L.knee_flex[0]}°`,M.knee==null?null:severity(M.knee,...L.knee_flex)]);
   else rows.push(["앞무릎 각도(코칭 참고)",M.knee==null?null:`${Math.round(M.knee)}°`,"참고용",null]);
   if(state.mode==="PITCHING")rows.push(["보폭(신장 대비)",M.stride==null?null:`${Math.round(M.stride)}%`,`${L.stride_low[0]}~${L.stride_high[0]}%`,M.stride==null?null:Math.max(severity(M.stride,...L.stride_low),severity(M.stride,...L.stride_high))]);
@@ -1122,7 +1132,11 @@ function renderResult(complete){
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
   an.swings.forEach(s=>{const[lv,k]=swingLevel(s);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
-    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span></div>`;
+    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
+    if(s.phases&&s.phases.some(p=>p.thumb)){const ph=document.createElement("div");ph.className="ph";
+      ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
+      d.insertBefore(ph,d.querySelector(".meta"));
+      const bt=d.querySelector(".phbtn");bt.onclick=()=>{const o=d.classList.toggle("open");bt.textContent=o?"단계별 사진 접기 ▴":"단계별 사진 보기 ▾"}}
     g.appendChild(d)});
 
   state.C=coaching(S,an,state.mode,sessions(state.pid));renderCoach(state.C);
@@ -1590,6 +1604,7 @@ async function resnapAtRelease(an){
     let th=hs,tl=ls;if(ok(5,6,9,10)){const ua=kp[5][1]-kp[9][1],ub=kp[6][1]-kp[10][1];if(Math.abs(ua-ub)>.3*torso){th=ua>ub?SIDE.L:SIDE.R;tl=ua>ub?SIDE.R:SIDE.L}}
     const sn=s.snap||{};
     if(ok(th.sh,th.el))sn.elbowH=(kp[th.sh][1]-kp[th.el][1])/torso;
+    s.thS=th;   /* 던지는 쪽 (앞발 착지 순간 어깨 각도를 잴 때 쓴다) */
     sn.tilt=side?null:Math.abs(Math.atan2(ms[0]-mh[0],mh[1]-ms[1])*180/Math.PI);
     if(ok(tl.hip,tl.kn,tl.an))sn.knee=angle3(kp[tl.hip],kp[tl.kn],kp[tl.an]);
     if(ok(th.sh,th.el,th.wr))sn.elbow=angle3(kp[th.sh],kp[th.el],kp[th.wr]);
@@ -1599,6 +1614,40 @@ async function resnapAtRelease(an){
     const sm=s.sideOK?s.ext.stride_max:null;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high));
     const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(k=>sv[k]>=.5).sort();
     try{await seekTo(e.t);const th=makeThumb(e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
+  }
+}
+/* 투구 단계별 장면: 균형점(앞무릎 최고점) → 앞발 착지 → 공 놓기 → 팔로스루.
+   (팔꿈치 굽힘 각도는 뒤·앞에서 찍으면 팔뚝이 화면 안쪽으로 향해 실제보다 작게 보여서 재지 않는다) */
+async function makePhases(an){
+  const PL=state.poseLog||[],okT=k=>[5,6,11,12].every(i=>k[i][2]>=.3),
+    T=k=>Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1;
+  for(const s of an.swings){
+    if(state.cancel)return;
+    const rel=s.snapT;if(rel==null)continue;
+    let kh=null,kv=-9,leg=null;
+    for(const q of PL){if(q.t<rel-2||q.t>rel-.15)continue;const k=q.kp;if(!okT(k))continue;const t=T(k);
+      for(const L of[[11,13,15],[12,14,16]])if(k[L[1]][2]>=.3){const v=(k[L[0]][1]-k[L[1]][1])/t;if(v>kv){kv=v;kh=q;leg=L}}}
+    if(kv<-.5)kh=null;   /* 무릎이 골반 근처까지 올라온 장면이 없으면 균형점을 못 찾은 것 */
+    let fc=null;
+    /* 앞발 착지 = 공 놓을 때까지 앞발이 더 움직이지 않기 시작한 첫 장면 (뒤·앞·옆 어느 방향에서 찍어도 통한다) */
+    if(kh){const seg=PL.filter(q=>q.t>kh.t+.1&&q.t<=rel+.05&&q.kp[leg[2]][2]>=.3);
+      if(seg.length>=2){const end=seg[seg.length-1].kp[leg[2]],t0=T(kh.kp);let i=seg.length-1;
+        while(i>0&&Math.hypot(seg[i-1].kp[leg[2]][0]-end[0],seg[i-1].kp[leg[2]][1]-end[1])<=.15*t0)i--;
+        if(seg[i].t<rel-.03||i===0)fc=seg[i]}}
+    let ft=null,fv=9;
+    for(const q of PL){if(q.t<rel+.1||q.t>rel+.8)continue;const k=q.kp;if(!okT(k))continue;const t=T(k);
+      for(const[sh,wr]of[[5,9],[6,10]])if(k[wr][2]>=.3){const v=(k[sh][1]-k[wr][1])/t;if(v<fv){fv=v;ft=q}}}
+    if(fv>-.5)ft=null;   /* 팔이 허리 아래로 내려온 장면이 없으면 팔로스루를 못 찾은 것 */
+    /* 어깨 각도 = 앞발 착지 순간 몸통 선(어깨→골반 방향)과 위팔이 이루는 각. 90~100°가 권장.
+       이때 팔은 몸 옆으로 벌어져 있어 앞·뒤에서 찍으면 잘 보인다. 옆모습이거나 공 놓는 순간에는 팔이 화면 안쪽으로 향해 잴 수 없다 */
+    if(fc&&s.thS){const k=fc.kp,h=s.thS;
+      if([5,6,11,12,h.sh,h.el].every(i=>k[i][2]>=CFG.kpConf)){const ms=[(k[5][0]+k[6][0])/2,(k[5][1]+k[6][1])/2],mh=[(k[11][0]+k[12][0])/2,(k[11][1]+k[12][1])/2],t=T(k);
+        if(Math.hypot(k[5][0]-k[6][0],k[5][1]-k[6][1])/t>CFG.viewSideMax){s.snap=s.snap||{};s.snap.abd=angle3([k[h.sh][0]+mh[0]-ms[0],k[h.sh][1]+mh[1]-ms[1]],k[h.sh],k[h.el])}}}
+    s.phases=[];
+    for(const[l,q]of[["균형점",kh],["앞발 착지",fc],["공 놓기","rel"],["팔로스루",ft]]){
+      if(q==="rel"){s.phases.push({l,thumb:s.thumb||null});continue}
+      if(!q){s.phases.push({l,thumb:null});continue}
+      try{await seekTo(q.t);s.phases.push({l,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
   }
 }
 function trackNear(t){let best=null,bd=1.5;for(const e of state.trackLog||[]){const d=Math.abs(e[0]-t);if(d<bd){bd=d;best=e}}return best}
