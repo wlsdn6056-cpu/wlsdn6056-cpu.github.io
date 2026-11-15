@@ -653,7 +653,7 @@ class Analyzer{
     if(this.mode==="PITCHING"&&(m.wristUp!=null||m.wristUp2!=null)){r.wSeen=true;const ups=r.ups||(r.ups=[]);
       const hi=Math.max(m.wristUp??-9,m.wristUp2??-9),lo=Math.min(m.wristUp??9,m.wristUp2??9);
       if(hi>=.1)ups.push([t,hi]);
-      if(lo<=-.9){const c=ups.filter(u=>u[0]<t&&t-u[0]<=.5);if(c.length){r.thrown=true;const b=c.reduce((x,y)=>y[1]>x[1]?y:x);if(!r.relBest||b[1]>r.relBest[1])r.relBest=b}}}
+      if(lo<=-.8){const c=ups.filter(u=>u[0]<t&&t-u[0]<=.6);if(c.length){r.thrown=true;const b=c.reduce((x,y)=>y[1]>x[1]?y:x);if(!r.relBest||b[1]>r.relBest[1])r.relBest=b}}}
     for(const[k,v,f]of[["tilt_max",m.tilt,Math.max],["knee_min",m.knee,Math.min],["stride_max",m.stride,Math.max],["head_max",m.headSway,Math.max],["elbow_h_min",m.elbowH,Math.min]])
       if(v!=null)r.ext[k]=k in r.ext?f(r.ext[k],v):v;
     /* 공 소리로 잡은 스윙은 소리가 난 순간(콘택트)을 대표 장면으로 고정 */
@@ -983,7 +983,7 @@ async function scan(){
   show("scan");state.cancel=false;state.saved=false;
   try{wakeLock=await navigator.wakeLock?.request("screen")}catch{}
   const an=new Analyzer(state.mode,state.hand);state.an=an;state.O=null;state.audioErr=false;
-  if(state.mode==="BATTING"||+state.dist>0){
+  {/* 투구도 소리를 읽는다: 구속뿐 아니라 "공 받는 동작"을 가려내는 데 쓴다 */
     $("scanText").textContent="영상 소리 읽는 중…";
     try{state.O=onsetEnvelope(await decodeAudio(state.file))}catch(e){console.error(e);state.audioErr=true}
     if(state.mode==="BATTING"&&state.O){an.hints=contactTimes(state.O,vid.duration);an.requireBall=state.ballOnly}
@@ -1044,6 +1044,10 @@ async function scan(){
   try{await wakeLock?.release()}catch{}
   if(state.mode==="PITCHING"&&+state.dist>0&&an.swings.length&&!state.cancel)await estimateSpeeds(an);
   if(state.mode==="PITCHING"&&!state.cancel){
+    /* 공 받기 거르기: 손을 가장 높이 든 순간에 글러브 소리가 났다면 공을 받은 것 (던질 때는 소리가 공이 날아간 뒤에 난다) */
+    if(state.O){const pops=contactTimes(state.O,vid.duration),b1=an.swings.length;
+      an.swings=an.swings.filter(s=>{if(s.kmh)return true;const rt=s.relBest?s.relBest[0]:null;return rt==null||!pops.some(p=>p-rt>=-.2&&p-rt<=.05)});   /* 받을 때는 소리가 손을 가장 높이 든 순간이거나 직전, 던질 때는 공이 날아간 뒤 */
+      an.catchN=b1-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     if(!(state.throws||[]).some(x=>x.isThrow)){const b0=an.swings.length;an.swings=an.swings.filter(s=>!s.notThrow);an.nonThrow=b0-an.swings.length;an.swings.forEach((s,i)=>s.n=i+1)}
     await resnapAtRelease(an);
   }
@@ -1064,6 +1068,7 @@ function renderResult(complete){
   {const n=an.practice||0,el2=$("rTrend");
    if(state.mode==="BATTING"&&an.requireBall&&n)el2.textContent+=` 공 소리가 없는 연습 스윙 ${n}회는 분석에서 뺐어요.`;
    if(state.mode==="BATTING"&&state.ballOnly&&!state.O)el2.textContent+=" 영상 소리를 읽지 못해 연습 스윙도 포함됐을 수 있어요.";
+   if(state.mode==="PITCHING"&&an.catchN)el2.textContent+=` 손을 든 순간 글러브 소리가 난 공 받기 동작 ${an.catchN}번은 투구가 아니라서 뺐어요.`;
    if(state.mode==="PITCHING"&&an.nonThrow)el2.textContent+=` 던지는 팔 동작이 없는 공 받기·준비 동작 ${an.nonThrow}번은 투구가 아니라서 뺐어요.`;
    if(state.mode==="PITCHING"&&an.swings.some(s=>s.snap&&s.snap.elbowH==null))el2.textContent+=an.swings.some(s=>s.badPose)?" '측정 부족' 동작은 공 놓는 순간 AI가 관절을 제대로 찾지 못해(빠른 동작·뒷모습 등) 판정하지 않았어요.":" '측정 부족' 동작은 던지는 팔이 가려져 팔꿈치를 재지 못해 판정하지 않았어요.";}
   const ap=$("addPitches");ap.hidden=!(state.mode==="PITCHING"&&S.n>0);
