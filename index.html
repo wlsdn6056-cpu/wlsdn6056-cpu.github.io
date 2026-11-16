@@ -1122,7 +1122,11 @@ function renderResult(complete){
   if(state.mode==="PITCHING")rows.push(["앞무릎 각도",M.knee==null?null:`${Math.round(M.knee)}°`,`≥ ${L.knee_flex[0]}°`,M.knee==null?null:severity(M.knee,...L.knee_flex)]);
   else rows.push(["앞무릎 각도(코칭 참고)",M.knee==null?null:`${Math.round(M.knee)}°`,"참고용",null]);
   if(state.mode==="PITCHING")rows.push(["보폭(신장 대비)",M.stride==null?null:`${Math.round(M.stride)}%`,`${L.stride_low[0]}~${L.stride_high[0]}%`,M.stride==null?null:Math.max(severity(M.stride,...L.stride_low),severity(M.stride,...L.stride_high))]);
-  else{rows.push(["뒷팔꿈치 각도",M.elbow==null?null:`${Math.round(M.elbow)}°`,"참고용",null]);rows.push(["머리 이동(콘택트)",M.head==null?null:`${Math.round(M.head*100)}%`,"코칭 참고",null])}
+  else{rows.push(["뒷팔꿈치 각도",M.elbow==null?null:`${Math.round(M.elbow)}°`,"참고용",null]);
+    const hm=median(an.swings.map(s=>s.snap&&s.snap.headMove).filter(v=>v!=null)),fd=an.swings.map(s=>s.snap&&s.snap.ftDone).filter(v=>v!=null),fr=fd.length?fd.filter(Boolean).length/fd.length:null;
+    if(hm!=null)rows.push(["머리 고정(준비→콘택트)",`${Math.round(hm*100)}%`,"≤ 25%",severity(hm,.25,.5)]);
+    else rows.push(["머리 이동(콘택트)",M.head==null?null:`${Math.round(M.head*100)}%`,"코칭 참고",null]);
+    rows.push(["팔로스루 완성",fr==null?null:`${fd.filter(Boolean).length}/${fd.length}회`,"손이 어깨 높이까지",fr==null?null:fr>=.7?0:fr>=.4?.4:.8])}
   if(state.mode==="PITCHING"&&+state.dist>0){const sp=(state.throws||[]).filter(x=>x.kmh).map(x=>x.kmh);
     rows.push(["평균 구속(추정)",sp.length?`${Math.round(median(sp))}km/h`:null,sp.length?`최고 ${Math.round(Math.max(...sp))}`:"참고용",null])}
   renderSpeed(an);
@@ -1133,7 +1137,7 @@ function renderResult(complete){
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
   an.swings.forEach(s=>{const[lv,k]=swingLevel(s);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
-    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
+    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}${s.snap&&(s.snap.headMove!=null||s.snap.ftDone!=null)?`<span class="muted" style="font-size:.76rem">${[s.snap.headMove!=null?`머리 이동 ${Math.round(s.snap.headMove*100)}%`:"",s.snap.ftDone!=null?(s.snap.ftDone?"팔로스루 완성":"팔로스루 짧음"):""].filter(Boolean).join(" · ")}</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
     if(s.phases&&s.phases.some(p=>p.thumb)){const ph=document.createElement("div");ph.className="ph";
       ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
       d.insertBefore(ph,d.querySelector(".meta"));
@@ -1633,6 +1637,11 @@ async function makePhases(an){
       let ft=null,fv=-9;
       for(const q of PL){if(q.t<tc+.15||q.t>tc+.8)continue;const k=q.kp;if(!okT(k))continue;const t=T(k);
         for(const[sh,wr]of[[5,9],[6,10]])if(k[wr][2]>=.3){const v=(k[sh][1]-k[wr][1])/t;if(v>fv){fv=v;ft=q}}}
+      /* 점검 ① 머리 고정: 준비 자세에서 콘택트까지 머리(코)가 움직인 거리(몸통 길이 대비). 적을수록 공을 끝까지 보고 친 것
+         점검 ② 팔로스루 완성: 공을 친 뒤 손이 어깨 높이 이상까지 끝까지 돌아갔는지 */
+      const cq=near(tc,tc-.1,tc+.1);s.snap=s.snap||{};
+      if(st&&cq&&st.kp[0][2]>=.3&&cq.kp[0][2]>=.3)s.snap.headMove=Math.hypot(cq.kp[0][0]-st.kp[0][0],cq.kp[0][1]-st.kp[0][1])/T(st.kp);
+      s.snap.ftDone=ft?fv>=-.2:null;   /* 손목이 어깨 높이 근처(몸통 길이의 20% 아래)까지 오면 완성 */
       if(!ft)ft=near(tc+.4,tc+.15,tc+.8);
       s.phases=[];
       for(const[l,q]of[["준비 자세",st],["스트라이드",sd],["콘택트","c"],["팔로스루",ft]]){
