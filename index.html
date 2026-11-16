@@ -1687,26 +1687,51 @@ function openSlow(s,j){
   let x1=1e9,y1=1e9,x2=-1e9,y2=-1e9;for(const q of PL){x1=Math.min(x1,q.box[0]);y1=Math.min(y1,q.box[1]);x2=Math.max(x2,q.box[2]);y2=Math.max(y2,q.box[3])}
   if(!PL.length&&s.peakBox)[x1,y1,x2,y2]=s.peakBox;if(!(x2>x1))[x1,y1,x2,y2]=[0,0,vw,vh];
   let h=(y2-y1)*1.15,w=Math.max(h*.75,(x2-x1)*1.15);h=w/.75;if(h>vh){h=vh;w=Math.min(vw,h*.75)}if(w>vw){w=vw;h=Math.min(vh,w/.75)}
-  const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h)),CW=360,CH=Math.round(CW*h/w);
-  let raf=0,paused=false;
+  const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h)),CW=540,CH=Math.round(CW*h/w);
+  let raf=0,paused=false,rec=null,recording=false,rate=.25;
   openSheet(`#${s.n} 느리게 보기`,body=>{
     body.innerHTML=`<canvas id="slowCan" width="${CW}" height="${CH}" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:12px;background:#0B1118"></canvas>
       <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">${[.25,.5,1].map(r=>`<button type="button" class="btn${r===.25?" primary":""}" data-r="${r}" style="padding:7px 12px">${r}배</button>`).join("")}<button type="button" class="btn" id="slowPP" style="padding:7px 12px">일시정지</button></div>
+      <div style="display:flex;justify-content:center;margin-top:8px"><button type="button" class="btn primary" id="slowSave" style="padding:8px 16px">⬇ 느린 영상 저장</button></div>
       <div style="display:flex;gap:4px;justify-content:center;margin-top:8px;flex-wrap:wrap">${s.phases.map((p,i)=>p.t==null?"":`<button type="button" class="btn" data-j="${i}" style="padding:5px 9px;font-size:.78rem">${p.l}</button>`).join("")}</div>
-      <p class="muted" style="font-size:.78rem;text-align:center;margin-top:6px">이 동작 구간만 반복해서 보여줘요. 단계 버튼을 누르면 그 순간으로 이동해요.</p>`;
+      <p class="muted" id="slowNote" style="font-size:.78rem;text-align:center;margin-top:6px">이 동작 구간만 반복해서 보여줘요. 단계 버튼을 누르면 그 순간으로 이동해요.</p>`;
     const ctx=body.querySelector("#slowCan").getContext("2d"),k=CW/w,pp=body.querySelector("#slowPP");
     const draw=()=>{
-      if($("sheet").hidden){try{vid.pause();vid.playbackRate=1}catch{}cancelAnimationFrame(raf);return}
-      if(!paused&&vid.currentTime>=b-.02){vid.currentTime=a}
+      if($("sheet").hidden){try{vid.pause();vid.playbackRate=1}catch{}cancelAnimationFrame(raf);if(rec&&rec.state!=="inactive"){rec.cancelled=true;rec.stop()}return}
+      if(!paused&&vid.currentTime>=b-.02){if(recording){paused=true;vid.pause();recording=false;rec.stop()}else vid.currentTime=a}
       try{ctx.drawImage(vid,x,y,w,h,0,0,CW,CH);
-        if(state.blur){let q=null,bd=.2;for(const e of PL){const d=Math.abs(e.t-vid.currentTime);if(d<bd){bd=d;q=e}}
-          if(q)pixelateFaces(ctx,[{kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}],k);
-          else ctx.fillRect(0,0,CW,CH*.3)}}catch(err){}
+        if(state.blur){/* 재생 중인 장면은 분석한 장면 사이에 있으므로 앞뒤 두 장면의 얼굴 위치를 모두 가린다 */
+          const ct=vid.currentTime;let q0=null,q1=null;for(const e of PL){if(e.t<=ct&&ct-e.t<=.25)q0=e;if(e.t>ct&&e.t-ct<=.25&&!q1)q1=e}
+          const L=[q0,q1].filter(Boolean).map(q=>({kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}));const q=L.length;
+          if(q)pixelateFaces(ctx,L,k);
+          else ctx.fillRect(0,0,CW,CH*.3)}
+        ctx.font="600 15px system-ui,sans-serif";ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(0,CH-26,CW,26);ctx.fillStyle="#fff";ctx.fillText(`PlayBall AI · #${s.n} · ${rate}배속`,10,CH-8)}catch(err){}
       raf=requestAnimationFrame(draw)};
     const go=t=>{vid.currentTime=clamp(t,a,b)};
-    body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{vid.playbackRate=+bt.dataset.r;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;vid.play().catch(()=>{});pp.textContent="일시정지"}});
-    body.querySelectorAll("[data-j]").forEach(bt=>bt.onclick=()=>{go(s.phases[+bt.dataset.j].t);if(!paused){paused=true;vid.pause();pp.textContent="재생"}});
-    pp.onclick=()=>{paused=!paused;if(paused){vid.pause();pp.textContent="재생"}else{vid.play().catch(()=>{});pp.textContent="일시정지"}};
+    body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{if(recording)return;rate=+bt.dataset.r;vid.playbackRate=rate;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;vid.play().catch(()=>{});pp.textContent="일시정지"}});
+    body.querySelectorAll("[data-j]").forEach(bt=>bt.onclick=()=>{if(recording)return;go(s.phases[+bt.dataset.j].t);if(!paused){paused=true;vid.pause();pp.textContent="재생"}});
+    pp.onclick=()=>{if(recording)return;paused=!paused;if(paused){vid.pause();pp.textContent="재생"}else{vid.play().catch(()=>{});pp.textContent="일시정지"}};
+    /* 느린 영상 저장: 화면에 그리는 장면을 그대로 녹화한다 (재생 속도가 느린 만큼 영상도 느리게 담긴다) */
+    const sv=body.querySelector("#slowSave"),note=body.querySelector("#slowNote");
+    sv.onclick=async()=>{
+      if(rec)return;const cv=body.querySelector("#slowCan");
+      if(!cv.captureStream||typeof MediaRecorder==="undefined"){note.textContent="이 기기에서는 영상 저장을 지원하지 않아요.";return}
+      const mt=["video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"].find(t=>MediaRecorder.isTypeSupported?.(t))||"",ext=mt.includes("mp4")?"mp4":"webm";
+      sv.disabled=true;sv.textContent=`녹화 중… (약 ${Math.ceil((b-a)/rate)}초)`;
+      paused=true;vid.pause();vid.playbackRate=rate;await seekTo(a);
+      const chunks=[];
+      try{rec=new MediaRecorder(cv.captureStream(30),mt?{mimeType:mt,videoBitsPerSecond:4e6}:{})}catch(err){rec=new MediaRecorder(cv.captureStream(30))}
+      rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+      const done=new Promise(r=>rec.onstop=r);
+      rec.start(250);recording=true;paused=false;vid.play().catch(()=>{});pp.textContent="일시정지";
+      await done;const cancelled=rec.cancelled;rec=null;recording=false;
+      if(!cancelled&&chunks.length){
+        const blob=new Blob(chunks,{type:(mt||"video/webm").split(";")[0]}),name=`PlayBall_${ymd()}_${s.n}번_${rate}배속.${ext}`;
+        const viaLink=()=>{const u=URL.createObjectURL(blob),el=document.createElement("a");el.href=u;el.download=name;document.body.appendChild(el);el.click();el.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)};
+        try{if(dl)await dl.save({filename:name,data:blob});else viaLink();note.textContent="저장했어요. 사진 앱이나 다운로드 폴더에서 확인해 주세요."}
+        catch(err){if(!(err&&err.code==="declined")){try{viaLink();note.textContent="저장했어요."}catch(e2){note.textContent="영상을 저장하지 못했어요."}}}}
+      sv.disabled=false;sv.textContent="⬇ 느린 영상 저장";
+      if(!$("sheet").hidden){paused=false;vid.currentTime=a;vid.play().catch(()=>{})}};
     vid.muted=true;vid.playbackRate=.25;go(s.phases[j]&&s.phases[j].t!=null?s.phases[j].t-.15:a);vid.play().catch(()=>{});raf=requestAnimationFrame(draw);
   });
 }
