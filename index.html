@@ -189,6 +189,8 @@ td.r{color:var(--muted);font-size:.8rem;text-align:right;white-space:nowrap;padd
 .sw .ph .none{aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;color:#8A96A3;font-size:.68rem;text-align:center;padding:4px}
 .sw .ph figcaption{position:absolute;left:0;right:0;bottom:0;font-size:.66rem;color:#fff;background:rgba(0,0,0,.55);text-align:center;padding:2px 0}
 .sw.open{grid-column:1/-1}.sw.open .ph{display:grid}.sw.open>img{display:none}
+.sw .ph figure.play{cursor:pointer}
+.sw .ph figure.play::after{content:"▶";position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:.6rem;display:flex;align-items:center;justify-content:center}
 .sw .phbtn{align-self:flex-start;margin-top:4px;font:inherit;font-size:.76rem;font-weight:600;color:var(--accent);background:none;border:0;padding:2px 0;cursor:pointer}
 .tips{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
 .report img{border-radius:10px;border:1px solid var(--line);width:100%}
@@ -1141,6 +1143,7 @@ function renderResult(complete){
     if(s.phases&&s.phases.some(p=>p.thumb)){const ph=document.createElement("div");ph.className="ph";
       ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
       d.insertBefore(ph,d.querySelector(".meta"));
+      ph.querySelectorAll("figure").forEach((f,j)=>{if(s.phases[j].t!=null&&vid.currentSrc){f.classList.add("play");f.onclick=()=>openSlow(s,j)}});
       const bt=d.querySelector(".phbtn");bt.onclick=()=>{const o=d.classList.toggle("open");bt.textContent=o?"단계별 사진 접기 ▴":"단계별 사진 보기 ▾"}}
     g.appendChild(d)});
 
@@ -1645,9 +1648,9 @@ async function makePhases(an){
       if(!ft)ft=near(tc+.4,tc+.15,tc+.8);
       s.phases=[];
       for(const[l,q]of[["준비 자세",st],["스트라이드",sd],["콘택트","c"],["팔로스루",ft]]){
-        if(q==="c"){s.phases.push({l,thumb:s.thumb||null});continue}
+        if(q==="c"){s.phases.push({l,t:tc,thumb:s.thumb||null});continue}
         if(!q){s.phases.push({l,thumb:null});continue}
-        try{await seekTo(q.t);s.phases.push({l,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
+        try{await seekTo(q.t);s.phases.push({l,t:q.t,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
       continue}
     const rel=s.snapT;if(rel==null)continue;
     let kh=null,kv=-9,leg=null;
@@ -1671,10 +1674,41 @@ async function makePhases(an){
         if(Math.hypot(k[5][0]-k[6][0],k[5][1]-k[6][1])/t>CFG.viewSideMax){s.snap=s.snap||{};s.snap.abd=angle3([k[h.sh][0]+mh[0]-ms[0],k[h.sh][1]+mh[1]-ms[1]],k[h.sh],k[h.el])}}}
     s.phases=[];
     for(const[l,q]of[["균형점",kh],["앞발 착지",fc],["공 놓기","rel"],["팔로스루",ft]]){
-      if(q==="rel"){s.phases.push({l,thumb:s.thumb||null});continue}
+      if(q==="rel"){s.phases.push({l,t:rel,thumb:s.thumb||null});continue}
       if(!q){s.phases.push({l,thumb:null});continue}
-      try{await seekTo(q.t);s.phases.push({l,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
+      try{await seekTo(q.t);s.phases.push({l,t:q.t,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
   }
+}
+/* 단계별 사진을 누르면 그 동작 구간만 느리게 반복 재생 (선수 주변을 크게 잘라서, 얼굴 가리기 유지) */
+function openSlow(s,j){
+  const ts=(s.phases||[]).map(p=>p.t).filter(t=>t!=null);if(!ts.length||!vid.currentSrc)return;
+  const D=vid.duration||1e9,a=Math.max(0,Math.min(...ts)-.4),b=Math.min(D,Math.max(...ts)+.5);
+  const PL=(state.poseLog||[]).filter(q=>q.t>=a-.3&&q.t<=b+.3),vw=vid.videoWidth,vh=vid.videoHeight;
+  let x1=1e9,y1=1e9,x2=-1e9,y2=-1e9;for(const q of PL){x1=Math.min(x1,q.box[0]);y1=Math.min(y1,q.box[1]);x2=Math.max(x2,q.box[2]);y2=Math.max(y2,q.box[3])}
+  if(!PL.length&&s.peakBox)[x1,y1,x2,y2]=s.peakBox;if(!(x2>x1))[x1,y1,x2,y2]=[0,0,vw,vh];
+  let h=(y2-y1)*1.15,w=Math.max(h*.75,(x2-x1)*1.15);h=w/.75;if(h>vh){h=vh;w=Math.min(vw,h*.75)}if(w>vw){w=vw;h=Math.min(vh,w/.75)}
+  const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h)),CW=360,CH=Math.round(CW*h/w);
+  let raf=0,paused=false;
+  openSheet(`#${s.n} 느리게 보기`,body=>{
+    body.innerHTML=`<canvas id="slowCan" width="${CW}" height="${CH}" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:12px;background:#0B1118"></canvas>
+      <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">${[.25,.5,1].map(r=>`<button type="button" class="btn${r===.25?" primary":""}" data-r="${r}" style="padding:7px 12px">${r}배</button>`).join("")}<button type="button" class="btn" id="slowPP" style="padding:7px 12px">일시정지</button></div>
+      <div style="display:flex;gap:4px;justify-content:center;margin-top:8px;flex-wrap:wrap">${s.phases.map((p,i)=>p.t==null?"":`<button type="button" class="btn" data-j="${i}" style="padding:5px 9px;font-size:.78rem">${p.l}</button>`).join("")}</div>
+      <p class="muted" style="font-size:.78rem;text-align:center;margin-top:6px">이 동작 구간만 반복해서 보여줘요. 단계 버튼을 누르면 그 순간으로 이동해요.</p>`;
+    const ctx=body.querySelector("#slowCan").getContext("2d"),k=CW/w,pp=body.querySelector("#slowPP");
+    const draw=()=>{
+      if($("sheet").hidden){try{vid.pause();vid.playbackRate=1}catch{}cancelAnimationFrame(raf);return}
+      if(!paused&&vid.currentTime>=b-.02){vid.currentTime=a}
+      try{ctx.drawImage(vid,x,y,w,h,0,0,CW,CH);
+        if(state.blur){let q=null,bd=.2;for(const e of PL){const d=Math.abs(e.t-vid.currentTime);if(d<bd){bd=d;q=e}}
+          if(q)pixelateFaces(ctx,[{kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}],k);
+          else ctx.fillRect(0,0,CW,CH*.3)}}catch(err){}
+      raf=requestAnimationFrame(draw)};
+    const go=t=>{vid.currentTime=clamp(t,a,b)};
+    body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{vid.playbackRate=+bt.dataset.r;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;vid.play().catch(()=>{});pp.textContent="일시정지"}});
+    body.querySelectorAll("[data-j]").forEach(bt=>bt.onclick=()=>{go(s.phases[+bt.dataset.j].t);if(!paused){paused=true;vid.pause();pp.textContent="재생"}});
+    pp.onclick=()=>{paused=!paused;if(paused){vid.pause();pp.textContent="재생"}else{vid.play().catch(()=>{});pp.textContent="일시정지"}};
+    vid.muted=true;vid.playbackRate=.25;go(s.phases[j]&&s.phases[j].t!=null?s.phases[j].t-.15:a);vid.play().catch(()=>{});raf=requestAnimationFrame(draw);
+  });
 }
 function trackNear(t){let best=null,bd=1.5;for(const e of state.trackLog||[]){const d=Math.abs(e[0]-t);if(d<bd){bd=d;best=e}}return best}
 async function poseNear(t,c,h){
