@@ -191,6 +191,11 @@ td.r{color:var(--muted);font-size:.8rem;text-align:right;white-space:nowrap;padd
 .sw.open{grid-column:1/-1}.sw.open .ph{display:grid}.sw.open>img{display:none}
 .sw .ph figure.play{cursor:pointer}
 .sw .ph figure.play::after{content:"▶";position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:.6rem;display:flex;align-items:center;justify-content:center}
+.rv{margin-top:10px;padding:12px;border-radius:12px;background:#EEF2F6;color:#18222D;font-size:.9rem;line-height:1.5}
+.rv .st{font-size:.76rem;color:#6B7785}.rv .q{font-weight:700;margin:4px 0}.rv .ai{font-size:.8rem;margin:2px 0 8px}
+.rv .ai.bad{color:var(--alert,#D2552A)}.rv .ai.good{color:var(--good,#1F8A55)}
+.rv .ans{display:flex;gap:6px;flex-wrap:wrap}.rv .ans .btn{padding:7px 11px;font-size:.84rem}
+.rv ul{margin:6px 0 0;padding-left:18px}.rv li{margin:4px 0}
 .sw .phbtn{align-self:flex-start;margin-top:4px;font:inherit;font-size:.76rem;font-weight:600;color:var(--accent);background:none;border:0;padding:2px 0;cursor:pointer}
 .tips{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
 .report img{border-radius:10px;border:1px solid var(--line);width:100%}
@@ -1692,7 +1697,8 @@ function openSlow(s,j){
   openSheet(`#${s.n} 느리게 보기`,body=>{
     body.innerHTML=`<canvas id="slowCan" width="${CW}" height="${CH}" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:12px;background:#0B1118"></canvas>
       <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">${[.25,.5,1].map(r=>`<button type="button" class="btn${r===.25?" primary":""}" data-r="${r}" style="padding:7px 12px">${r}배</button>`).join("")}<button type="button" class="btn" id="slowPP" style="padding:7px 12px">일시정지</button></div>
-      <div style="display:flex;justify-content:center;margin-top:8px"><button type="button" class="btn primary" id="slowSave" style="padding:8px 16px">⬇ 느린 영상 저장</button></div>
+      <div style="display:flex;justify-content:center;gap:6px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn primary" id="slowSave" style="padding:8px 16px">⬇ 느린 영상 저장</button><button type="button" class="btn primary" id="rvStart" style="padding:8px 16px">✓ 고칠 점 같이 확인하기</button></div>
+      <div id="rvBox" class="rv" hidden></div>
       <div style="display:flex;gap:4px;justify-content:center;margin-top:8px;flex-wrap:wrap">${s.phases.map((p,i)=>p.t==null?"":`<button type="button" class="btn" data-j="${i}" style="padding:5px 9px;font-size:.78rem">${p.l}</button>`).join("")}</div>
       <p class="muted" id="slowNote" style="font-size:.78rem;text-align:center;margin-top:6px">이 동작 구간만 반복해서 보여줘요. 단계 버튼을 누르면 그 순간으로 이동해요.</p>`;
     const ctx=body.querySelector("#slowCan").getContext("2d"),k=CW/w,pp=body.querySelector("#slowPP");
@@ -1732,6 +1738,43 @@ function openSlow(s,j){
         catch(err){if(!(err&&err.code==="declined")){try{viaLink();note.textContent="저장했어요."}catch(e2){note.textContent="영상을 저장하지 못했어요."}}}}
       sv.disabled=false;sv.textContent="⬇ 느린 영상 저장";
       if(!$("sheet").hidden){paused=false;vid.currentTime=a;vid.play().catch(()=>{})}};
+    /* 고칠 점 같이 확인하기: 단계별로 멈춰 서서 체크 질문에 답한다. AI가 문제를 찾은 항목을 먼저 보여준다 */
+    const rvBox=body.querySelector("#rvBox"),rvBtn=body.querySelector("#rvStart");
+    const sn=s.snap||{},fl=s.flags||[],P=state.mode==="PITCHING";
+    const CK=(P?[
+      {j:0,k:"balance",l:"균형점",q:"무릎을 가장 높이 들었을 때 몸이 홈 쪽으로 먼저 쏠리거나 뒤로 기울지 않고, 축발 위에 균형 있게 서 있나요?",tip:"균형점에서 1초 멈췄다가 던지는 연습을 해보세요."},
+      {j:1,k:"armFC",l:"착지 때 팔 높이",q:"앞발이 땅에 닿을 때 던지는 팔꿈치가 어깨 높이 근처까지 올라와 있나요?",ai:sn.abd!=null?`AI 측정: 어깨 각도 ${Math.round(sn.abd)}° (권장 90~100°)`:null,bad:sn.abd!=null&&(sn.abd<80||sn.abd>110),tip:"팔이 늦게 올라오면 어깨·팔꿈치 부담이 커져요. 앞발을 내딛을 때 팔을 'L'자로 미리 올려두는 연습을 해보세요."},
+      {j:2,k:"elbow_drop",l:"팔꿈치 처짐",q:"공을 놓는 순간 팔꿈치가 어깨보다 아래로 처지지 않았나요?",ai:sn.elbowH!=null?`AI 측정: 팔꿈치 높이 ${sn.elbowH>=0?"+":""}${Math.round(sn.elbowH*100)}% (어깨 대비)`:null,bad:fl.includes("elbow_drop"),tip:"팔꿈치를 어깨 높이로 유지하는 수건 던지기 연습이 도움이 돼요."},
+      {j:2,k:"trunk_tilt",l:"몸통 기울기",q:"공을 놓을 때 몸통이 옆으로 많이 기울지 않았나요?",ai:sn.tilt!=null?`AI 측정: 몸통 기울기 ${Math.round(sn.tilt)}°`:null,bad:fl.includes("trunk_tilt"),tip:"몸통을 옆으로 꺾기보다 앞으로 숙이며 던지도록 해보세요."},
+      {j:3,k:"follow",l:"팔로스루",q:"공을 놓은 뒤 던진 팔이 반대쪽 무릎 쪽으로 끝까지 내려왔나요?",tip:"팔을 중간에 멈추면 어깨 뒤쪽 부담이 커요. 끝까지 감아 내리는 연습을 해보세요."}
+    ]:[
+      {j:0,k:"stance",l:"준비 자세",q:"무릎을 살짝 굽히고 체중을 양발에 고르게 실은 채 편하게 서 있나요?",tip:"어깨너비보다 조금 넓게 서고 무릎을 살짝 굽혀 보세요."},
+      {j:1,k:"stride",l:"스트라이드",q:"앞발을 내딛을 때 머리와 몸이 앞으로 따라 나가지 않고 제자리에 있나요?",tip:"앞발만 살짝 내딛고 머리는 그대로 두는 연습을 해보세요."},
+      {j:2,k:"head",l:"머리 고정",q:"공을 맞히는 순간 머리가 고정된 채 공을 보고 있나요?",ai:sn.headMove!=null?`AI 측정: 머리 이동 ${Math.round(sn.headMove*100)}% (권장 25% 이하)`:null,bad:sn.headMove!=null&&sn.headMove>.25,tip:"티배팅에서 공을 친 뒤에도 공이 있던 자리를 잠깐 보는 연습이 좋아요."},
+      {j:2,k:"tilt",l:"몸통 기울기",q:"공을 맞힐 때 몸통이 옆으로 많이 기울지 않았나요?",ai:sn.tilt!=null?`AI 측정: 몸통 기울기 ${Math.round(sn.tilt)}° (권장 ${tiltLim("BATTING")[0]}° 이하)`:null,bad:sn.tilt!=null&&sn.tilt>tiltLim("BATTING")[0],tip:"몸통을 세운 채로 회전하는 연습을 해보세요."},
+      {j:3,k:"follow",l:"팔로스루",q:"배트를 끝까지 돌려 손이 어깨 높이까지 올라갔나요?",ai:sn.ftDone!=null?`AI 판단: 팔로스루 ${sn.ftDone?"완성":"짧음"}`:null,bad:sn.ftDone===false,tip:"공을 친 뒤에도 배트를 등 뒤까지 끝까지 돌려 보세요."}
+    ]).filter(c=>s.phases[c.j]&&s.phases[c.j].t!=null).sort((x,y)=>(y.bad?1:0)-(x.bad?1:0));
+    if(!CK.length)rvBtn.hidden=true;
+    let ri=0;const ans={};
+    const stop=()=>{if(!paused){paused=true;vid.pause();pp.textContent="재생"}};
+    const showStep=()=>{
+      if(ri>=CK.length)return showSum();const c=CK[ri];go(s.phases[c.j].t);stop();
+      rvBox.innerHTML=`<div class="st">${ri+1}/${CK.length} · ${s.phases[c.j].l} 장면${c.bad?" · AI가 찾은 문제":""}</div><div class="q">${c.q}</div>${c.ai?`<div class="ai ${c.bad?"bad":"good"}">${c.ai}</div>`:""}
+        <div class="muted" style="font-size:.76rem;margin-bottom:6px">재생을 눌러 앞뒤 움직임도 느리게 확인해 보세요.</div>
+        <div class="ans"><button type="button" class="btn" data-a="ok">괜찮아요</button><button type="button" class="btn" data-a="fix">고쳐야 해요</button><button type="button" class="btn" data-a="skip">잘 모르겠어요</button>${ri?`<button type="button" class="btn" data-a="back">← 이전</button>`:""}</div>`;
+      rvBox.querySelectorAll("[data-a]").forEach(bt=>bt.onclick=()=>{const a=bt.dataset.a;if(a==="back"){ri--;return showStep()}ans[c.k]=a;ri++;showStep()})};
+    const showSum=()=>{
+      const fix=CK.filter(c=>ans[c.k]==="fix"),agree=fix.filter(c=>c.bad).length,miss=CK.filter(c=>c.bad&&ans[c.k]==="ok");
+      s.review={ts:Date.now(),ans:{...ans},fix:fix.map(c=>c.l)};
+      (state.review||(state.review={}))[s.n]=s.review;saveReview();
+      rvBox.innerHTML=`<div class="q">${fix.length?`고칠 점 ${fix.length}개`:"고칠 점이 없어요 👍"}</div>
+        ${fix.length?`<ul>${fix.map(c=>`<li><b>${c.l}</b>${c.bad?" (AI도 같은 문제를 찾았어요)":""}<br><span class="muted" style="font-size:.82rem">${c.tip}</span></li>`).join("")}</ul>`:""}
+        ${miss.length?`<p class="muted" style="font-size:.8rem;margin-top:6px">AI는 ${miss.map(c=>c.l).join(", ")}에서 문제를 봤는데 괜찮다고 하셨어요. 느리게 한 번 더 보셔도 좋아요.</p>`:""}
+        <p class="muted" style="font-size:.78rem;margin-top:6px">확인 결과는 오늘 기록에 함께 저장했어요.</p>
+        <div class="ans" style="margin-top:6px"><button type="button" class="btn" data-a="again">다시 확인하기</button></div>`;
+      rvBox.querySelector("[data-a=again]").onclick=()=>{ri=0;showStep()};
+      paused=false;vid.currentTime=a;vid.play().catch(()=>{});pp.textContent="일시정지"};
+    rvBtn.onclick=()=>{rvBtn.hidden=true;rvBox.hidden=false;ri=0;showStep();rvBox.scrollIntoView({block:"nearest"})};
     vid.muted=true;vid.playbackRate=.25;go(s.phases[j]&&s.phases[j].t!=null?s.phases[j].t-.15:a);vid.play().catch(()=>{});raf=requestAnimationFrame(draw);
   });
 }
@@ -1935,12 +1978,20 @@ document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()
 /* ===== 분석 기록 ===== */
 function fmtDate(ts){const d=new Date(ts),y=new Date().getFullYear();return`${d.getFullYear()!==y?d.getFullYear()+"년 ":""}${d.getMonth()+1}월 ${d.getDate()}일`}
 function sessions(pid){return CLOUD.ready?CLOUD.sess.filter(x=>x.pid===pid).sort((a,b)=>a.ts-b.ts):store.get("pb_sessions_"+pid,[])}
+/* 슬로모션 점검 결과를 오늘 기록(가장 최근에 저장된 분석 기록)에 붙인다 */
+function saveReview(){
+  try{const R=state.review||{},fix=[...new Set(Object.values(R).flatMap(r=>r.fix))],rv={swings:Object.keys(R).length,fix};
+    const id=state.lastRecId;if(!id)return;
+    if(CLOUD.ready){const r=CLOUD.sess.find(x=>x.id===id);if(r){r.review=rv;cloudWrite(`${cloudBase()}/sessions/${id}`,r)}return}
+    const l=store.get("pb_sessions_"+state.pid,[]),r=l.find(x=>x.id===id);if(r){r.review=rv;localStorage.setItem("pb_sessions_"+state.pid,JSON.stringify(l))}}catch(err){console.error(err)}}
 function saveSession(S){
   const pid=state.pid,list=sessions(pid),Q=state.Q||{},sp=(state.throws||[]).filter(x=>x.kmh).map(x=>x.kmh),[lv,k]=verdictOf(S,state.Q);
   let img=null;try{const c=document.createElement("canvas");c.width=540;c.height=750;c.getContext("2d").drawImage(state.reportCanvas,0,0,540,750);img=c.toDataURL("image/jpeg",.72)}catch{}
+  state.review=null;
   const rec={id:String(Date.now()),pid,ts:Date.now(),mode:state.mode,video:state.name,n:S.n,flagged:S.flaggedN,avg:S.avg,lv,lvKey:k,q:Q.score,qg:Q.grade,
     spAvg:sp.length?median(sp):null,spMax:sp.length?Math.max(...sp):null,spN:sp.length,img,
-    med:Object.fromEntries(Object.entries(S.med).filter(([,v])=>v!=null).map(([k,v])=>[k,Math.round(v*1000)/1000])),focus:state.C&&state.C.focus?state.C.focus.k:null};
+    review:null,med:Object.fromEntries(Object.entries(S.med).filter(([,v])=>v!=null).map(([k,v])=>[k,Math.round(v*1000)/1000])),focus:state.C&&state.C.focus?state.C.focus.k:null};
+  state.lastRecId=rec.id;
   if(CLOUD.ready){CLOUD.sess.push(rec);cloudWrite(`${cloudBase()}/sessions/${rec.id}`,rec);
     /* 계정 저장: 리포트 이미지는 선수별 최근 60개까지 보관 */
     const mine=CLOUD.sess.filter(x=>x.pid===pid&&x.img).sort((a,b)=>b.ts-a.ts);
@@ -1993,6 +2044,7 @@ function renderHistory(){
     top.append(el("b",null,`${fmtDate(x.ts)} · ${x.mode==="BATTING"?"타격":"투구"}`));const pl=el("span","pill",x.lv);pl.style.background=`var(--${x.lvKey})`;top.appendChild(pl);
     meta.append(top,el("span","muted",`동작 ${x.n}회 · 부하 ${x.avg==null?"-":Math.round(x.avg)+"%"} · 신뢰도 ${x.qg||"-"}`));
     if(x.spAvg)meta.appendChild(el("span","num",`구속 약 ${Math.round(x.spAvg)}km/h (최고 ${Math.round(x.spMax)})`));
+    if(x.review)meta.appendChild(Object.assign(el("span","muted",`슬로모션 점검: ${x.review.fix.length?"고칠 점 "+x.review.fix.join(", "):"고칠 점 없음"}`),{style:"font-size:.76rem"}));
     if(x.video)meta.appendChild(Object.assign(el("span","muted",x.video),{style:"font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}));
     it.appendChild(meta);it.onclick=()=>openSession(x);box.appendChild(it)});
 }
