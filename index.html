@@ -1730,12 +1730,49 @@ function openSlow(s,j){
   let raf=0,paused=false,rec=null,recording=false,rate=.25;
   openSheet(`#${s.n} 느리게 보기`,body=>{
     body.innerHTML=`<canvas id="slowCan" width="${CW}" height="${CH}" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:12px;background:#0B1118"></canvas>
-      <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">${[.25,.5,1].map(r=>`<button type="button" class="btn${r===.25?" primary":""}" data-r="${r}" style="padding:7px 12px">${r}배</button>`).join("")}<button type="button" class="btn" id="slowPP" style="padding:7px 12px">일시정지</button></div>
+      <div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">${[.25,.5,1].map(r=>`<button type="button" class="btn${r===.25?" primary":""}" data-r="${r}" style="padding:7px 12px">${r}배</button>`).join("")}<button type="button" class="btn" id="slowPP" style="padding:7px 12px">일시정지</button><button type="button" class="btn primary" id="slowSk" style="padding:7px 12px">관절선·각도</button></div>
       <div style="display:flex;justify-content:center;gap:6px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn primary" id="slowSave" style="padding:8px 16px">⬇ 느린 영상 저장</button><button type="button" class="btn primary" id="rvStart" style="padding:8px 16px">✓ 고칠 점 같이 확인하기</button></div>
       <div id="rvBox" class="rv" hidden></div>
       <div style="display:flex;gap:4px;justify-content:center;margin-top:8px;flex-wrap:wrap">${s.phases.map((p,i)=>p.t==null?"":`<button type="button" class="btn" data-j="${i}" style="padding:5px 9px;font-size:.78rem">${p.l}</button>`).join("")}</div>
       <p class="muted" id="slowNote" style="font-size:.78rem;text-align:center;margin-top:6px">이 동작 구간만 반복해서 보여줘요. 단계 버튼을 누르면 그 순간으로 이동해요.</p>`;
     const ctx=body.querySelector("#slowCan").getContext("2d"),k=CW/w,pp=body.querySelector("#slowPP");
+    /* 관절선·각도 표시: 분석한 장면 사이는 앞뒤 관절 위치를 시간 비율로 이어서 그린다 */
+    let showSk=true;const skb=body.querySelector("#slowSk");skb.onclick=()=>{showSk=!showSk;skb.classList.toggle("primary",showSk)};
+    const PM=state.mode==="PITCHING",thS=s.thS||SIDE[state.hand],tlS=thS===SIDE.L?SIDE.R:SIDE.L,fls=s.flags||[],hotS={};
+    const mark=(es,c)=>es.forEach(([p,q])=>hotS[p+"-"+q]=c);
+    if(fls.includes("elbow_drop"))mark([[thS.sh,thS.el],[thS.el,thS.wr]],"#FF4D4D");
+    if(fls.includes("knee_flex"))mark([[tlS.hip,tlS.kn],[tlS.kn,tlS.an]],"#FF4D4D");
+    if(fls.includes("trunk_tilt"))mark([[5,11],[6,12]],"#FF4D4D");
+    const Tq=kq=>Math.hypot((kq[5][0]+kq[6][0])/2-(kq[11][0]+kq[12][0])/2,(kq[5][1]+kq[6][1])/2-(kq[11][1]+kq[12][1])/2)||1;
+    const sideV=(()=>{const r=PL.filter(q=>[5,6,11,12].every(i=>q.kp[i][2]>=.3)).map(q=>Math.hypot(q.kp[5][0]-q.kp[6][0],q.kp[5][1]-q.kp[6][1])/Tq(q.kp));return r.length?median(r)<=CFG.viewSideMax:false})();
+    const headRef=(()=>{if(PM||!s.phases||!s.phases[0]||s.phases[0].t==null)return null;let q=null,bd=.2;for(const e of PL){const d=Math.abs(e.t-s.phases[0].t);if(d<bd&&e.kp[0][2]>=.3){bd=d;q=e}}return q?[q.kp[0][0],q.kp[0][1],Tq(q.kp)]:null})();
+    let sm={},lastCt=-1;
+    const overlay=ct=>{
+      let q0=null,q1=null;for(const e of PL){if(e.t<=ct)q0=e;else{q1=e;break}}
+      if(q0&&ct-q0.t>.3)q0=null;if(q1&&q1.t-ct>.3)q1=null;if(!q0&&!q1)return;
+      const A=q0||q1,B=q1||q0,f=q0&&q1&&q1.t>q0.t?(ct-q0.t)/(q1.t-q0.t):0;
+      const raw=A.kp.map((p,i)=>{const r=B.kp[i];return[p[0]+(r[0]-p[0])*f,p[1]+(r[1]-p[1])*f,p[2]>=.3&&r[2]>=.3]});
+      const P2=raw.map(p=>[(p[0]-x)*k,(p[1]-y)*k]),V=raw.map(p=>p[2]),ok=(...ids)=>ids.every(i=>V[i]);
+      drawSkeleton(ctx,P2,V,1,"#FFD24A",4,hotS);
+      if(Math.abs(ct-lastCt)>.2)sm={};lastCt=ct;
+      const T=ok(5,6,11,12)?Tq(raw):null,L=[];
+      const add=(key,v,j,name,unit="°")=>{if(v==null||!isFinite(v)){delete sm[key];return}sm[key]=sm[key]==null?v:sm[key]+.35*(v-sm[key]);L.push({v:Math.round(sm[key])+unit,j:P2[j],name})};
+      if(T){const ms=[(raw[5][0]+raw[6][0])/2,(raw[5][1]+raw[6][1])/2],mh=[(raw[11][0]+raw[12][0])/2,(raw[11][1]+raw[12][1])/2];
+        if(PM&&!sideV&&ok(thS.sh,thS.el))add("abd",angle3([raw[thS.sh][0]+mh[0]-ms[0],raw[thS.sh][1]+mh[1]-ms[1]],raw[thS.sh],raw[thS.el]),thS.sh,"어깨 각도");
+        if(PM&&sideV&&ok(thS.sh,thS.el,thS.wr))add("elb",angle3(raw[thS.sh],raw[thS.el],raw[thS.wr]),thS.el,"팔꿈치 각도");
+        if(ok(tlS.hip,tlS.kn,tlS.an))add("knee",angle3(raw[tlS.hip],raw[tlS.kn],raw[tlS.an]),tlS.kn,"앞무릎 각도");
+        if(!sideV)add("tilt",Math.abs(Math.atan2(ms[0]-mh[0],mh[1]-ms[1])*180/Math.PI),11,"몸통 기울기");
+        if(!PM&&headRef&&V[0])add("head",Math.hypot(raw[0][0]-headRef[0],raw[0][1]-headRef[1])/headRef[2]*100,0,"머리 이동","%")}
+      /* 각도 상자: 관절이 화면 왼쪽이면 왼쪽 끝, 오른쪽이면 오른쪽 끝에 놓고 점선으로 잇는다 */
+      const BW=176,BH=52,col={l:[],r:[]};
+      L.sort((p,q)=>p.j[1]-q.j[1]).forEach(it=>{const side=it.j[0]<CW/2?"l":"r",c=col[side];let by=clamp(it.j[1]-BH/2,8,CH-BH-34);
+        if(c.length&&by<c[c.length-1]+BH+6)by=c[c.length-1]+BH+6;c.push(by);
+        const bx=side==="l"?8:CW-BW-8,ex=side==="l"?bx+BW:bx;
+        ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle="rgba(255,255,255,.85)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(ex,by+BH/2);ctx.lineTo(it.j[0],it.j[1]);ctx.stroke();ctx.restore();
+        ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(it.j[0],it.j[1],4,0,7);ctx.fill();
+        ctx.fillStyle="rgba(16,20,26,.78)";ctx.fillRect(bx,by,BW,BH);ctx.strokeStyle="rgba(255,255,255,.35)";ctx.lineWidth=1;ctx.strokeRect(bx,by,BW,BH);
+        ctx.fillStyle="#fff";ctx.font="700 26px system-ui,sans-serif";ctx.fillText(it.v,bx+10,by+35);
+        ctx.font="600 16px system-ui,sans-serif";ctx.fillStyle="rgba(255,255,255,.9)";ctx.fillText(it.name,bx+(it.v.length>3?84:70),by+32)})};
     const draw=()=>{
       if($("sheet").hidden){try{vid.pause();vid.playbackRate=1}catch{}cancelAnimationFrame(raf);if(rec&&rec.state!=="inactive"){rec.cancelled=true;rec.stop()}return}
       if(!paused&&vid.currentTime>=b-.02){if(recording){paused=true;vid.pause();recording=false;rec.stop()}else vid.currentTime=a}
@@ -1745,6 +1782,7 @@ function openSlow(s,j){
           const L=[q0,q1].filter(Boolean).map(q=>({kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}));const q=L.length;
           if(q)pixelateFaces(ctx,L,k);
           else ctx.fillRect(0,0,CW,CH*.3)}
+        if(showSk)overlay(vid.currentTime);
         ctx.font="600 15px system-ui,sans-serif";ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(0,CH-26,CW,26);ctx.fillStyle="#fff";ctx.fillText(`PlayBall AI · #${s.n} · ${rate}배속`,10,CH-8)}catch(err){}
       raf=requestAnimationFrame(draw)};
     const go=t=>{vid.currentTime=clamp(t,a,b)};
