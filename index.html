@@ -1759,7 +1759,9 @@ function slowView(o){
     const overlay=ct=>{
       let q0=null,q1=null;for(const e of PL){if(e.t<=ct)q0=e;else{q1=e;break}}
       if(q0&&ct-q0.t>.3)q0=null;if(q1&&q1.t-ct>.3)q1=null;if(!q0&&!q1)return;
-      const A=q0||q1,B=q1||q0,f=q0&&q1&&q1.t>q0.t?(ct-q0.t)/(q1.t-q0.t):0;
+      let A=q0||q1,B=q1||q0,f=q0&&q1&&q1.t>q0.t?(ct-q0.t)/(q1.t-q0.t):0;
+      /* 앞뒤 장면의 사람 크기가 크게 다르면(다른 사람으로 잘못 잡혔을 수 있음) 이어 그리지 않고 가까운 장면만 쓴다 */
+      if(q0&&q1){const h0=q0.box[3]-q0.box[1],h1=q1.box[3]-q1.box[1];if(Math.max(h0,h1)/Math.max(1,Math.min(h0,h1))>1.25){A=B=f<.5?q0:q1;f=0}}
       const raw=A.kp.map((p,i)=>{const r=B.kp[i];return[p[0]+(r[0]-p[0])*f,p[1]+(r[1]-p[1])*f,p[2]>=.3&&r[2]>=.3]});
       const P2=raw.map(p=>[(p[0]-x)*k,(p[1]-y)*k]),V=raw.map(p=>p[2]),ok=(...ids)=>ids.every(i=>V[i]);
       drawSkeleton(ctx,P2,V,1,"#FFD24A",4,hotS);
@@ -2273,6 +2275,9 @@ function pickSame(list,tr,ref,maxD,minSim){
   for(const c of list){
     const h=c.box[3]-c.box[1],hr=h/tr.h,d=Math.hypot(center(c.box)[0]-tr.c[0],center(c.box)[1]-tr.c[1])/tr.h;
     if(d>maxD||hr<.65||hr>1.55)continue;
+    /* 뒤에 있는 사람과 겹칠 때 그 사람으로 넘어가는 것 막기: 갑자기 키가 커지면서 발 위치(상자 아래)는 위로 올라가면 다른 사람(더 멀리 선 어른 등)이다.
+       투수는 던지는 동안 몸을 낮추거나 앞으로 나와서, 키가 커지면서 발이 뒤로 물러나는 일은 없다 */
+    if(hr>1.12&&c.box[3]<tr.c[1]+tr.h/2-.1*tr.h)continue;
     let sc=d;if(ref){const sim=histSim(ref.h,appearance(c));c._sim=sim;if(sim<minSim)continue;sc+=(1-sim)*3}
     if(sc<bs){bs=sc;best=c}
   }
