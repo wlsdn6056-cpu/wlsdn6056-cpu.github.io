@@ -171,6 +171,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tl-legend i{width:10px;height:10px;border-radius:3px;display:block}
 .tl-axis{display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted)}
 table{border-collapse:collapse;width:100%;font-size:.9rem}
+.gg{position:relative;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#1E8A55 0 25%,#E0A526 25% 50%,#D2552A 50% 100%);margin-left:auto}
+.gg i{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #142033;transform:translate(-50%,-50%)}
 th{font-size:.74rem;color:var(--muted);text-align:left;font-weight:600;padding:0 0 6px}
 td{padding:9px 0;border-top:1px solid var(--line);vertical-align:middle}
 td.v{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
@@ -352,6 +354,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
     <div class="stage"><canvas id="pickCan" width="640" height="360"></canvas><div class="stage-msg" id="pickMsg">영상을 불러오는 중…</div></div>
     <div class="rangebox"><input type="range" id="pickT" min="0" max="1000" value="0" aria-label="장면 이동"><span class="num" id="pickTime">00:00</span></div>
     <p class="muted" style="font-size:.85rem">선수가 안 보이거나 가려져 있으면 슬라이더로 전신이 잘 보이는 장면을 찾아주세요.</p>
+    <p id="fpsTip" hidden style="font-size:.84rem;line-height:1.55;background:#FFF6E0;color:#5A4300;border-radius:10px;padding:10px 12px;margin:8px 0"></p>
     <button class="btn primary big" id="startScan" disabled>이 선수로 분석 시작</button>
   </section>
 
@@ -707,6 +710,8 @@ class Analyzer{
     this.swings.push(r);this.swings.sort((a,b)=>a.start-b.start);this.swings.forEach((s,i)=>s.n=i+1);
   }
   flush(){this.finalize()}
+  /* 선수가 0.7초 넘게 화면에서 사라졌다 돌아오면(공 주우러 나감 등) 진행 중 동작을 끝내고 떨림 필터·속도 기록을 새로 시작한다 */
+  gapReset(){this.finalize();this.mv=[];this.filter.reset();this.prevWr={};this.headRef=null;this.cooldownUntil=-1}
 }
 
 function summarize(an){
@@ -952,6 +957,10 @@ $("file").addEventListener("change",async e=>{
   if(!res.ok){show("home");const el=$("homeErr");el.hidden=false;
     el.innerHTML="이 영상을 열 수 없어요. 아래 내용을 캡처해서 알려주세요.<br><span class='diag'></span>";
     el.querySelector(".diag").textContent=res.diag;return}
+  /* 초당 프레임 수 확인: 30fps면 공 놓는 순간 팔이 흐려져 '측정 부족'이 나오기 쉽다 → 60fps 촬영을 안내 */
+  $("fpsTip").hidden=true;
+  videoFrameTimes(f).then(FT=>{if(state.file!==f)return;state.frameTimes=FT;const fps=FT&&FT.length>10?(FT.length-1)/(FT[FT.length-1]-FT[0]):null;state.fps=fps?Math.round(fps):null;
+    if(fps&&fps<45){const t=$("fpsTip");t.innerHTML=`💡 이 영상은 <b>초당 ${Math.round(fps)}프레임</b>이에요. 공 놓는 순간 팔이 흐려져 '측정 부족'이 나오기 쉬워요. 다음엔 <b>60fps</b>로 찍어 보세요.<br><span style="font-size:.78rem">아이폰: 설정 → 카메라 → 비디오 녹화 → 1080p HD/60fps · 갤럭시: 카메라 → 동영상 → 상단 FPS 버튼 60</span>`;t.hidden=false}}).catch(()=>{});
   const st0=await autoFind();
   $("pickT").value=vid.duration?Math.round(st0/vid.duration*1000):0;await pickAt(+$("pickT").value);
   if(st0>0&&state.cands&&state.cands.length&&state.sel==null)$("pickMsg").textContent=`앞부분 인트로를 건너뛰고 ${fmt(st0)} 장면에서 ${state.cands.length}명을 찾았어요. 분석할 선수를 터치하세요.`;
@@ -1059,6 +1068,7 @@ async function scan(){
       if(p){lost=0;const c=center(p.box),h=p.box[3]-p.box[1];state.trackLog.push([t,c[0],c[1],h]);state.poseLog.push({t,kp:p.kp.map(k=>k.slice()),box:p.box.slice()});
         track={c:[.5*track.c[0]+.5*c[0],.5*track.c[1]+.5*c[1]],h:.7*track.h+.3*h};
         if(p._sim!=null&&p._sim>.85&&p.kp.slice(5).reduce((a,k)=>a+k[2],0)/12>.45){const cur=appearance(p);ref.h=ref.h.map((v,i)=>.92*v+.08*cur[i])}
+        if(an.lastSeen!=null&&t-an.lastSeen>.7)an.gapReset();an.lastSeen=t;
         res=an.update(p,t,(kp,valid)=>makeThumb(p.box,kp,valid,state.blur));
         if(res&&res.m){q.views++;if(res.m.view==="oblique")q.oblique++}}
       if(an.rec||(res&&res.m&&Math.max(res.m.speed||0,(res.m.arm||0)*.85)>=CFG.speedStart*.5))denseUntil=t+.8;
@@ -1134,6 +1144,8 @@ function renderResult(complete){
 
   const M=S.med,L=LIMITS,rows=[];
   const dot=sv=>sv==null?"":`<span class="dot" style="background:var(--${sv<.25?"good":sv<.5?"watch":"alert"})"></span>`;
+  /* 신호등 막대: 왼쪽 초록(권장 범위 안) → 노랑(관찰) → 빨강(주의). 점이 내 위치 */
+  const gauge=sv=>sv==null?`<span class="muted" style="font-size:.75rem">참고</span>`:`<div class="gg" role="img" aria-label="${sv<.25?"좋음":sv<.5?"관찰":"주의"}"><i style="left:${sv<=0?12:Math.min(96,26+sv*100)}%"></i></div>`;
   if(state.mode==="PITCHING")rows.push(["팔꿈치 높이(어깨 대비)",M.elbowH==null?null:`${M.elbowH>=0?"+":""}${Math.round(M.elbowH*100)}%`,`≥ ${L.elbow_drop[0]*100}%`,M.elbowH==null?null:severity(M.elbowH,...L.elbow_drop)]);
   rows.push([`몸통 측방 기울기(${state.mode==="BATTING"?"콘택트":"릴리스"})`,M.tilt==null?null:`${Math.round(M.tilt)}°`,`≤ ${tiltLim(state.mode)[0]}°`,M.tilt==null?null:severity(M.tilt,...tiltLim(state.mode))]);
   if(state.mode==="PITCHING"){const A=median(an.swings.map(s=>s.snap&&s.snap.abd).filter(v=>v!=null));
@@ -1150,8 +1162,9 @@ function renderResult(complete){
     rows.push(["평균 구속(추정)",sp.length?`${Math.round(median(sp))}km/h`:null,sp.length?`최고 ${Math.round(Math.max(...sp))}`:"참고용",null])}
   renderSpeed(an);
   state.rows=rows;
-  $("rTable").innerHTML=`<tr><th>지표</th><th style="text-align:right">측정값</th><th style="text-align:right">권장</th></tr>`+
-    rows.map(([l,v,r,sv])=>`<tr><td>${l}</td><td class="v">${v??'<span class="muted">측정 불가</span>'}${dot(sv)}</td><td class="r">${r}</td></tr>`).join("");
+  $("rTable").innerHTML=`<tr><th>지표</th><th style="text-align:right">측정값</th><th style="text-align:right">상태</th></tr>`+
+    rows.map(([l,v,r,sv])=>`<tr><td>${l}<div class="muted" style="font-size:.74rem">권장 ${r}</div></td><td class="v">${v??'<span class="muted">측정 불가</span>'}</td><td style="text-align:right;width:96px">${v==null?"":gauge(sv)}</td></tr>`).join("")+
+    `<tr><td colspan="3" class="muted" style="font-size:.74rem;border-top:0;padding-top:4px"><span class="gg" style="display:inline-block;width:46px;vertical-align:middle;margin:0 4px 0 0"></span>왼쪽 초록일수록 권장 범위 안이에요 (초록 좋음 · 노랑 관찰 · 빨강 주의)</td></tr>`;
 
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
@@ -1202,9 +1215,10 @@ function makeReport(S,complete){
 
   card(490,90+state.rows.length*62);
   x.fillStyle=P.ink;x.font=`600 34px ${F}`;x.fillText("핵심 지표",84,548);
-  state.rows.forEach(([l,v,r,sv],i)=>{const y=610+i*62;x.fillStyle=P.ink;x.font=`30px ${F}`;x.fillText(l,84,y);
-    x.font=`30px ${FM}`;x.textAlign="right";x.fillStyle=v?P.ink:P.mut;x.fillText(v??"측정 불가",720,y);x.fillStyle=P.mut;x.font=`24px ${F}`;x.fillText(r,920,y);x.textAlign="left";
-    if(sv!=null){x.fillStyle=lc(sv<.25?"good":sv<.5?"watch":"alert");x.beginPath();x.arc(970,y-10,12,0,7);x.fill()}});
+  state.rows.forEach(([l,v,r,sv],i)=>{const y=610+i*62;x.fillStyle=P.ink;x.font=`28px ${F}`;x.fillText(l,84,y);
+    x.font=`28px ${FM}`;x.textAlign="right";x.fillStyle=v?P.ink:P.mut;x.fillText(v??"측정 불가",640,y);x.textAlign="left";
+    if(v!=null&&sv!=null)pdfGauge(x,670,y-17,230,sv);else if(v!=null){x.fillStyle=P.mut;x.font=`22px ${F}`;x.fillText("참고",670,y-4)}
+    x.fillStyle=P.mut;x.font=`20px ${F}`;x.textAlign="right";x.fillText(r,1000,y);x.textAlign="left"});
 
   card(y0,420);
   x.fillStyle=P.ink;x.font=`600 34px ${F}`;x.fillText("대표 동작",84,y0+58);
@@ -1227,6 +1241,11 @@ function makeReport(S,complete){
   return c;
 }
 
+/* PDF용 신호등 막대 (초록 0~25% · 노랑 25~50% · 빨강 50~100%), 점이 내 위치 */
+function pdfGauge(x,X,Y,W,sv){
+  const H=14;x.save();x.beginPath();x.roundRect(X,Y,W,H,7);x.clip();
+  x.fillStyle="#1E8A55";x.fillRect(X,Y,W*.25,H);x.fillStyle="#E0A526";x.fillRect(X+W*.25,Y,W*.25,H);x.fillStyle="#D2552A";x.fillRect(X+W*.5,Y,W*.5,H);x.restore();
+  const p=X+W*(sv<=0?.12:Math.min(.96,.26+sv));   /* 권장 범위 안=초록, 조금이라도 벗어나면 노랑부터 */x.fillStyle="#fff";x.strokeStyle="#142033";x.lineWidth=4;x.beginPath();x.arc(p,Y+H/2,11,0,7);x.fill();x.stroke()}
 /* ===== 리포트 공유 (PDF / 이미지 / 요약 글) ===== */
 const RP={bg:"#F4F6F8",card:"#FFFFFF",ink:"#142033",mut:"#5A6678",line:"#D3DAE3",acc:"#C62F3B",good:"#1E8A55",watch:"#B97E06",alert:"#D2552A",idle:"#8A94A3"};
 const RF='"Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR","Malgun Gothic",sans-serif',RFD='"Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR","Malgun Gothic",sans-serif',RFM='ui-monospace,Menlo,"Roboto Mono",monospace';
@@ -1239,48 +1258,58 @@ function pageBase(title,sub){
   return[c,x];
 }
 function swingPages(){
-  const sw=state.an?state.an.swings:[],per=6,pages=[];
+  /* 동작별 상세: 동작마다 사진 2장(투구: 앞발 착지·공 놓기 / 타격: 스트라이드·콘택트)과 결과 표와 같은 지표 */
+  const sw=state.an?state.an.swings:[],per=4,pages=[],PM=state.mode==="PITCHING";
   for(let i=0;i<sw.length;i+=per){
     const[c,x]=pageBase("동작별 상세",`${state.player} · ${modeKr()} · 총 ${sw.length}회 중 ${i+1}~${Math.min(sw.length,i+per)}`);
     sw.slice(i,i+per).forEach((s,j)=>{
-      const cx=48+(j%2)*500,cy=190+Math.floor(j/2)*430;
-      x.fillStyle=RP.card;x.beginPath();x.roundRect(cx,cy,476,406,18);x.fill();x.strokeStyle=RP.line;x.lineWidth=2;x.stroke();
-      if(s.thumb)x.drawImage(s.thumb,cx+16,cy+18,222,296);else{x.fillStyle="#0B1118";x.fillRect(cx+16,cy+18,222,296)}
-      const tx=cx+254,[lv,k]=swingLevel(s);
-      x.fillStyle=RP.ink;x.font=`34px ${RFM}`;x.fillText(`#${s.n}`,tx,cy+56);
-      x.fillStyle=RP.mut;x.font=`22px ${RFM}`;x.fillText(fmt1(s.peakT),tx,cy+88);
-      x.fillStyle=RP[k]||RP.idle;x.font=`800 42px ${RFD}`;x.fillText(lv,tx,cy+142);
-      x.fillStyle=RP.ink;x.font=`24px ${RF}`;x.fillText(`부하 ${lv==="측정 부족"?"-":Math.round(s.scoreMax)+"%"}`,tx,cy+180);
-      const r=v=>v==null?"-":Math.round(v);
-      const lines=[`몸통 기울기 ${r(s.snap.tilt)}°`,`앞무릎 ${r(s.snap.knee)}°`];
-      if(state.mode==="PITCHING"){lines.push(`팔꿈치 높이 ${s.snap.elbowH==null?"-":(s.snap.elbowH>=0?"+":"")+Math.round(s.snap.elbowH*100)+"%"}`);lines.push(`보폭 ${r(s.ext.stride_max)}${s.ext.stride_max==null?"":"%"}`)}
-      if(s.kmh)lines.push(`구속 약 ${Math.round(s.kmh)}km/h`);
-      else lines.push(`뒷팔꿈치 ${r(s.snap.elbow)}°`);
-      x.fillStyle=RP.mut;x.font=`22px ${RF}`;lines.forEach((t,li)=>x.fillText(t,tx,cy+222+li*32));
-      x.fillStyle=s.flags.length?RP.alert:RP.good;x.font=`22px ${RF}`;
-      wrapText(x,s.flags.length?"주의: "+s.flags.map(f=>COMP_LABEL[f]).join(", "):"주의 항목 없음",cx+16,cy+384,444,30);
+      const cx=48+(j%2)*500,cy=190+Math.floor(j/2)*610;
+      x.fillStyle=RP.card;x.beginPath();x.roundRect(cx,cy,476,586,18);x.fill();x.strokeStyle=RP.line;x.lineWidth=2;x.stroke();
+      const ph=s.phases||[],A=ph[1]&&ph[1].thumb,B=(ph[2]&&ph[2].thumb)||s.thumb;
+      [[A,PM?"앞발 착지":"스트라이드"],[B,PM?"공 놓기":"콘택트"]].forEach(([im,l],k)=>{const ix=cx+16+k*226,iy=cy+16;
+        if(im)x.drawImage(im,ix,iy,218,290);else{x.fillStyle="#0B1118";x.fillRect(ix,iy,218,290);x.fillStyle="#8A96A3";x.font=`20px ${RF}`;x.textAlign="center";x.fillText("장면을 못 찾음",ix+109,iy+150);x.textAlign="left"}
+        x.fillStyle="rgba(0,0,0,.6)";x.fillRect(ix,iy+260,218,30);x.fillStyle="#fff";x.font=`600 20px ${RF}`;x.textAlign="center";x.fillText(l,ix+109,iy+282);x.textAlign="left"});
+      const ty=cy+356,[lv,k]=swingLevel(s);
+      x.fillStyle=RP.ink;x.font=`32px ${RFM}`;x.fillText(`#${s.n}`,cx+20,ty);
+      x.fillStyle=RP.mut;x.font=`20px ${RFM}`;x.fillText(fmt1(s.peakT),cx+92,ty);
+      x.fillStyle=RP[k]||RP.idle;x.font=`800 36px ${RFD}`;x.fillText(lv,cx+214,ty+2);
+      x.fillStyle=RP.ink;x.font=`22px ${RF}`;x.textAlign="right";x.fillText(`부하 ${lv==="측정 부족"?"-":Math.round(s.scoreMax)+"%"}`,cx+456,ty);x.textAlign="left";
+      const u=(v,un)=>v==null?"-":Math.round(v)+un,sn=s.snap||{},L=[];
+      if(PM){L.push(`팔꿈치 높이 ${sn.elbowH==null?"-":(sn.elbowH>=0?"+":"")+Math.round(sn.elbowH*100)+"%"}`,`몸통 기울기 ${u(sn.tilt,"°")}`,`어깨 각도 ${u(sn.abd,"°")}`,`앞무릎 ${u(sn.knee,"°")}`,`보폭 ${u(s.ext&&s.ext.stride_max,"%")}`);if(s.kmh)L.push(`구속 약 ${Math.round(s.kmh)}km/h`)}
+      else L.push(`몸통 기울기 ${u(sn.tilt,"°")}`,`앞무릎 ${u(sn.knee,"°")}`,`뒷팔꿈치 ${u(sn.elbow,"°")}`,`머리 이동 ${sn.headMove==null?"-":Math.round(sn.headMove*100)+"%"}`,`팔로스루 ${sn.ftDone==null?"-":sn.ftDone?"완성":"짧음"}`);
+      x.fillStyle=RP.mut;x.font=`22px ${RF}`;L.forEach((t,li)=>x.fillText(t,cx+20+(li%2)*228,ty+48+Math.floor(li/2)*34));
+      x.fillStyle=s.flags.length?RP.alert:lv==="측정 부족"?RP.mut:RP.good;x.font=`22px ${RF}`;
+      wrapText(x,s.flags.length?"주의: "+s.flags.map(f=>COMP_LABEL[f]).join(", "):(lv==="측정 부족"?"팔 동작이 흐려 판정하지 못했어요":"주의 항목 없음"),cx+20,cy+562,436,30);
     });
     pages.push(c);
   }
   return pages;
 }
 function guidePage(S){
-  const[c,x]=pageBase("지표 설명과 코칭",`${state.player} · ${modeKr()} · ${new Date().toLocaleDateString("ko-KR")}`);
+  const[c,x]=pageBase("지표 설명",`${state.player} · ${modeKr()} · ${new Date().toLocaleDateString("ko-KR")}`);
+  /* 결과 표·동작별 상세에 나오는 지표를 모두 같은 이름으로 설명한다 */
   const items=[
+    ["그래프 읽는 법","결과 표의 막대에서 점이 왼쪽 초록에 있을수록 권장 범위 안이에요. 노랑은 관찰, 빨강은 주의예요."],
     ["측정 신뢰도","선수가 화면에 얼마나 크게 찍혔는지, 관절이 얼마나 또렷하게 보였는지, 선수를 놓친 장면이 얼마나 적은지, 촬영 각도로 계산한 점수예요. '낮음'이면 판정을 보류해요."],
-    ["관절 부하 지수","동작마다 부상과 관련된 자세(타격은 몸통 기울기, 투구는 팔꿈치·몸통·무릎·보폭)가 권장 범위를 얼마나 벗어났는지 0~100%로 합친 값이에요. 25% 미만 양호, 50% 미만 관찰, 그 이상은 주의예요."],
-    ["몸통 측방 기울기","몸이 옆으로 기운 정도예요. 타격은 12° 이하, 투구는 30° 이하를 권장해요(투수는 글러브 쪽으로 어느 정도 기우는 게 자연스러워요). 많이 기울면 허리와 어깨에 부담이 커져요."],
-    ["앞무릎 각도 (투구)","앞발을 딛은 뒤 무릎 각도예요. 125° 이상을 권장해요. 너무 굽히면 하체가 못 버티고 무릎 부담이 커져요."],
+    ["관절 부하 지수","동작마다 부상과 관련된 자세가 권장 범위를 얼마나 벗어났는지 0~100%로 합친 값이에요. 25% 미만 양호, 50% 미만 관찰, 그 이상은 주의예요. 판정하지 못한 동작(측정 부족)은 빼고 계산해요."],
   ];
-  if(state.mode==="PITCHING"){items.push(["팔꿈치 높이","던질 때 어깨선 대비 팔꿈치 높이예요. 어깨선보다 많이 낮으면 팔꿈치 안쪽 부담(리틀리그 엘보)이 커져요."]);
-    items.push(["보폭","키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 던지는 방향과 직각으로(옆에서) 찍은 영상에서만 재고, 정면·비스듬한 영상은 측정 불가로 표시해요."]);
-    if(+state.dist>0)items.push(["구속(추정)",`공이 손을 떠나는 순간(투구 동작)과 미트에 꽂히는 소리 사이의 시간으로 계산한 평균 속도예요. 투구판~홈 ${state.dist}m 기준이에요. 스피드건(손을 떠나는 순간 속도)보다 5~10% 낮게 나오고, 일반 영상에서 오차는 ±5% 안팎이에요.`])}
-  else items.push(["뒷팔꿈치·머리 흔들림","코칭 참고용 지표예요. 부상 판정에는 들어가지 않아요."]);
+  if(state.mode==="PITCHING"){
+    items.push(["팔꿈치 높이(어깨 대비)","공을 놓을 때 어깨선 대비 팔꿈치 높이예요. -5% 이상을 권장해요. 어깨선보다 많이 낮으면 팔꿈치 안쪽 부담(리틀리그 엘보)이 커져요. 공 놓는 순간이 흐리면 바로 직전 장면으로 재요."]);
+    items.push(["몸통 측방 기울기(릴리스)","공을 놓을 때 몸이 옆으로 기운 정도예요. 30° 이하를 권장해요(글러브 쪽으로 어느 정도 기우는 건 자연스러워요). 많이 기울면 허리와 어깨에 부담이 커져요."]);
+    items.push(["어깨 각도(앞발 착지)","앞발이 땅에 닿는 순간 몸통 선과 위팔이 이루는 각이에요. 90~100°를 권장해요. 작으면 팔이 늦게 올라온다는 뜻이에요. 앞이나 뒤에서 찍은 영상에서만 재요."]);
+    items.push(["앞무릎 각도","공을 놓을 때 앞무릎 각도예요. 125° 이상을 권장해요. 너무 굽으면 하체가 못 버티고 무릎 부담이 커져요."]);
+    items.push(["보폭(신장 대비)","키 대비 내딛는 발의 거리예요. 70~110%를 권장해요. 옆에서 찍은 영상에서만 재고, 정면·비스듬한 영상은 측정 불가로 표시해요."]);
+    if(+state.dist>0)items.push(["구속(추정)",`공이 손을 떠나는 순간(투구 동작)과 미트에 꽂히는 소리 사이의 시간으로 계산한 평균 속도예요. 투구판~홈 ${state.dist}m 기준이에요. 스피드건(손을 떠나는 순간 속도)보다 5~10% 낮게 나오고, 일반 영상에서 오차는 ±5% 안팎이에요.`]);}
+  else{
+    items.push(["몸통 측방 기울기(콘택트)","공을 맞힐 때 몸이 옆으로 기운 정도예요. 12° 이하를 권장해요. 많이 기울면 허리 부담이 커지고 타구가 뜨기 쉬워요."]);
+    items.push(["앞무릎 각도(코칭 참고)","공을 맞힐 때 앞무릎 각도예요. 부상 판정에는 들어가지 않는 참고 값이에요."]);
+    items.push(["뒷팔꿈치 각도","공을 맞힐 때 뒷팔(포수 쪽 팔) 팔꿈치 각도예요. 참고 값이에요."]);
+    items.push(["머리 고정(준비→콘택트)","준비 자세부터 공을 맞힐 때까지 머리가 움직인 거리(몸통 길이 대비)예요. 25% 이하를 권장해요. 적을수록 공을 끝까지 보고 친 거예요."]);
+    items.push(["팔로스루 완성","공을 친 뒤 손이 어깨 높이까지 끝까지 돌아간 스윙의 수예요."]);
+  }
   let y=230;
   for(const[t,d]of items){x.fillStyle=RP.ink;x.font=`600 30px ${RF}`;x.fillText(t,56,y);x.fillStyle=RP.mut;x.font=`25px ${RF}`;y=wrapText(x,d,56,y+42,968,36)+22}
-  y+=20;x.fillStyle=RP.ink;x.font=`800 52px ${RFD}`;x.fillText("코칭 포인트",56,y);y+=60;x.font=`26px ${RF}`;
-  for(const[t,st]of coachText(state.C,S)){x.font=st==="h"?`600 28px ${RF}`:`26px ${RF}`;x.fillStyle=st==="alert"?RP.alert:st==="good"?RP.good:st==="mut"?RP.mut:RP.ink;
-    if(st==="h")y+=8;if(y>1380)break;y=wrapText(x,t,56,y,968,38)+8}
+  /* 코칭 포인트는 첫 페이지에 모두 있어요 */
   x.fillStyle=RP.mut;x.font=`22px ${RF}`;
   wrapText(x,"※ 2D 영상 기반 비의료 참고 지표이며 의료 진단을 대체하지 않아요. 기준값은 전문가 검증 전 임시 값이에요. 통증이 있으면 전문의와 상담하세요.",56,1440,968,32);
   return c;
@@ -1735,6 +1764,11 @@ function openSlow(s,j){if(!vid.currentSrc)return;const R=slowRange(s);if(!R)retu
 /* 느리게 보기 화면. live=true면 방금 분석한 영상, false면 기록에 저장해 둔 짧은 영상(얼굴은 이미 가려져 있음) */
 function slowView(o){
   const{V,s,j,live,a,b,x,y,w,h,PL}=o,CW=540,CH=Math.round(CW*h/w);
+  /* 숏폼(9:16) 저장용 화면: 위에 이름·날짜·판정 배지, 가운데 느린 영상(관절선·각도 포함), 아래 주의 항목 */
+  const SC=document.createElement("canvas");SC.width=720;SC.height=1280;const sx=SC.getContext("2d"),SF='"Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+  const lvT=o.lv||(live?swingLevel(s)[0]:null),lvC={"양호":"#1E8A55","관찰":"#C98B00","주의":"#D2552A","측정 부족":"#6B7785"}[lvT]||"#6B7785";
+  const who=o.name||state.player||"",when=o.date||new Date().toLocaleDateString("ko-KR"),mk=(s.mode||state.mode)==="BATTING"?"타격":"투구";
+  const flagTxt=(s.flags||[]).length?"주의: "+s.flags.map(f=>COMP_LABEL[f]||f).join(", "):(lvT==="측정 부족"?"팔 동작이 흐려 판정하지 못했어요":"주의 항목 없음");
   const seekV=t=>live?seekTo(t):new Promise(r=>{let d=0;const f=()=>{if(d)return;d=1;V.removeEventListener("seeked",f);r()};V.addEventListener("seeked",f);V.currentTime=t;setTimeout(f,1500)});
   let raf=0,paused=false,rec=null,recording=false,rate=.25;
   openSheet(`#${s.n} 느리게 보기`,body=>{
@@ -1795,6 +1829,13 @@ function slowView(o){
           else ctx.fillRect(0,0,CW,CH*.3)}
         if(showSk)overlay(V.currentTime);
         ctx.font="600 15px system-ui,sans-serif";ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(0,CH-26,CW,26);ctx.fillStyle="#fff";ctx.fillText(`PlayBall AI · #${s.n} · ${rate}배속`,10,CH-8)}catch(err){}
+      if(recording){try{sx.fillStyle="#0B1118";sx.fillRect(0,0,720,1280);sx.fillStyle="#C62F3B";sx.fillRect(0,0,720,8);
+        sx.fillStyle="#fff";sx.font=`800 40px ${SF}`;sx.fillText("PlayBall AI",36,78);
+        sx.fillStyle="rgba(255,255,255,.8)";sx.font=`500 25px ${SF}`;sx.fillText(`${who} · ${mk} #${s.n} · ${when}`,36,120);
+        if(lvT){sx.font=`800 30px ${SF}`;const tw=sx.measureText(lvT).width+44;sx.fillStyle=lvC;sx.beginPath();sx.roundRect(720-36-tw,40,tw,56,28);sx.fill();sx.fillStyle="#fff";sx.fillText(lvT,720-36-tw+22,79)}
+        const vh=Math.min(1000,700*CH/CW),vw=vh*CW/CH;sx.drawImage(ctx.canvas,(720-vw)/2,150,vw,vh);
+        sx.fillStyle=(s.flags||[]).length?"#FF9F7A":"#9BE3B8";sx.font=`600 26px ${SF}`;sx.fillText(flagTxt,36,1215);
+        sx.fillStyle="rgba(255,255,255,.6)";sx.font=`22px ${SF}`;sx.fillText(`${rate}배속 느린 영상 · 2D 영상 기반 참고 지표`,36,1252)}catch(err){}}
       raf=requestAnimationFrame(draw)};
     const go=t=>{V.currentTime=clamp(t,a,b)};
     body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{if(recording)return;rate=+bt.dataset.r;V.playbackRate=rate;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;V.play().catch(()=>{});pp.textContent="일시정지"}});
@@ -1809,7 +1850,7 @@ function slowView(o){
       sv.disabled=true;sv.textContent=`녹화 중… (약 ${Math.ceil((b-a)/rate)}초)`;
       paused=true;V.pause();V.playbackRate=rate;await seekV(a);
       const chunks=[];
-      try{rec=new MediaRecorder(cv.captureStream(30),mt?{mimeType:mt,videoBitsPerSecond:4e6}:{})}catch(err){rec=new MediaRecorder(cv.captureStream(30))}
+      try{rec=new MediaRecorder(SC.captureStream(30),mt?{mimeType:mt,videoBitsPerSecond:5e6}:{})}catch(err){rec=new MediaRecorder(SC.captureStream(30))}
       rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
       const done=new Promise(r=>rec.onstop=r);
       rec.start(250);recording=true;paused=false;V.play().catch(()=>{});pp.textContent="일시정지";
@@ -1890,6 +1931,7 @@ async function recordClips(an){
       vid.pause();mr.stop();await done;
       if(chunks.length){const sc=k;out.push({n:s.n,blob:new Blob(chunks,{type:(mt||"video/webm").split(";")[0]}),meta:{n:s.n,mode:state.mode,hand:state.hand,thS:s.thS?(s.thS===SIDE.L?"L":"R"):null,
         flags:s.flags||[],snap:s.snap?{abd:s.snap.abd,elbowH:s.snap.elbowH,tilt:s.snap.tilt,headMove:s.snap.headMove,ftDone:s.snap.ftDone}:{},
+        lv:swingLevel(s)[0],name:state.player,date:new Date().toLocaleDateString("ko-KR"),
         phases:(s.phases||[]).map(p=>({l:p.l,t:p.t==null?null:+(p.t-a).toFixed(3)})),cw:CW,ch:CH,dur:+(b-a).toFixed(3),
         PL:PL.map(q=>({t:+(q.t-a).toFixed(3),kp:q.kp.map(p=>[+((p[0]-x)*sc).toFixed(1),+((p[1]-y)*sc).toFixed(1),+p[2].toFixed(2)]),box:[0,0,CW,CH]}))}})}
     }catch(err){console.error(err)}
@@ -1902,7 +1944,7 @@ async function openClips(rec){
   const play=(cl,j)=>{const V=document.createElement("video");V.muted=true;V.playsInline=true;V.setAttribute("playsinline","");V.preload="auto";
     V.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none";document.body.appendChild(V);V.src=URL.createObjectURL(cl.blob);
     const m=cl.meta,s={n:m.n,mode:m.mode,hand:m.hand,thS:m.thS?SIDE[m.thS]:null,flags:m.flags,snap:m.snap,phases:m.phases.map(p=>({l:p.l,t:p.t}))};
-    const go=()=>slowView({V,s,j,live:false,a:0,b:Math.min(m.dur,isFinite(V.duration)?V.duration:m.dur),x:0,y:0,w:m.cw,h:m.ch,PL:m.PL});
+    const go=()=>slowView({V,s,j,live:false,lv:m.lv,name:m.name,date:m.date,a:0,b:Math.min(m.dur,isFinite(V.duration)?V.duration:m.dur),x:0,y:0,w:m.cw,h:m.ch,PL:m.PL});
     if(V.readyState>=1)go();else V.addEventListener("loadedmetadata",go,{once:true})};
   if(v.clips.length===1)return play(v.clips[0],2);
   openSheet("느린 영상 고르기",body=>{body.innerHTML=`<p class="muted" style="font-size:.84rem;margin-bottom:8px">볼 동작을 골라 주세요.</p><div style="display:flex;gap:6px;flex-wrap:wrap">${v.clips.map((c,i)=>`<button type="button" class="btn" data-i="${i}" style="padding:8px 14px">#${c.n} 보기</button>`).join("")}</div>`;
