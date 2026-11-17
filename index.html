@@ -1094,6 +1094,8 @@ async function scan(){
     await resnapAtRelease(an);
     if(!state.cancel)await makePhases(an);
   }
+  state.clips=null;
+  if(!state.cancel&&an.swings.some(s=>s.phases&&s.phases.some(p=>p.t!=null))){setStatus("느린 영상 저장 준비 중","");try{state.clips=await recordClips(an)}catch(err){console.error(err)}}
   const complete=!state.cancel;state.cancel=false;
   renderResult(complete);
 }
@@ -1719,14 +1721,21 @@ async function makePhases(an){
   }
 }
 /* 단계별 사진을 누르면 그 동작 구간만 느리게 반복 재생 (선수 주변을 크게 잘라서, 얼굴 가리기 유지) */
-function openSlow(s,j){
-  const ts=(s.phases||[]).map(p=>p.t).filter(t=>t!=null);if(!ts.length||!vid.currentSrc)return;
+/* 느리게 보기 구간과 선수 주변 자르기 범위 (현재 분석 영상 기준) */
+function slowRange(s){
+  const ts=(s.phases||[]).map(p=>p.t).filter(t=>t!=null);if(!ts.length)return null;
   const D=vid.duration||1e9,a=Math.max(0,Math.min(...ts)-.4),b=Math.min(D,Math.max(...ts)+.5);
   const PL=(state.poseLog||[]).filter(q=>q.t>=a-.3&&q.t<=b+.3),vw=vid.videoWidth,vh=vid.videoHeight;
   let x1=1e9,y1=1e9,x2=-1e9,y2=-1e9;for(const q of PL){x1=Math.min(x1,q.box[0]);y1=Math.min(y1,q.box[1]);x2=Math.max(x2,q.box[2]);y2=Math.max(y2,q.box[3])}
   if(!PL.length&&s.peakBox)[x1,y1,x2,y2]=s.peakBox;if(!(x2>x1))[x1,y1,x2,y2]=[0,0,vw,vh];
   let h=(y2-y1)*1.15,w=Math.max(h*.75,(x2-x1)*1.15);h=w/.75;if(h>vh){h=vh;w=Math.min(vw,h*.75)}if(w>vw){w=vw;h=Math.min(vh,w/.75)}
-  const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h)),CW=540,CH=Math.round(CW*h/w);
+  const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h));
+  return{a,b,x,y,w,h,PL}}
+function openSlow(s,j){if(!vid.currentSrc)return;const R=slowRange(s);if(!R)return;slowView(Object.assign({V:vid,s,j,live:true},R))}
+/* 느리게 보기 화면. live=true면 방금 분석한 영상, false면 기록에 저장해 둔 짧은 영상(얼굴은 이미 가려져 있음) */
+function slowView(o){
+  const{V,s,j,live,a,b,x,y,w,h,PL}=o,CW=540,CH=Math.round(CW*h/w);
+  const seekV=t=>live?seekTo(t):new Promise(r=>{let d=0;const f=()=>{if(d)return;d=1;V.removeEventListener("seeked",f);r()};V.addEventListener("seeked",f);V.currentTime=t;setTimeout(f,1500)});
   let raf=0,paused=false,rec=null,recording=false,rate=.25;
   openSheet(`#${s.n} 느리게 보기`,body=>{
     body.innerHTML=`<canvas id="slowCan" width="${CW}" height="${CH}" style="width:100%;max-width:360px;display:block;margin:0 auto;border-radius:12px;background:#0B1118"></canvas>
@@ -1738,7 +1747,7 @@ function openSlow(s,j){
     const ctx=body.querySelector("#slowCan").getContext("2d"),k=CW/w,pp=body.querySelector("#slowPP");
     /* 관절선·각도 표시: 분석한 장면 사이는 앞뒤 관절 위치를 시간 비율로 이어서 그린다 */
     let showSk=true;const skb=body.querySelector("#slowSk");skb.onclick=()=>{showSk=!showSk;skb.classList.toggle("primary",showSk)};
-    const PM=state.mode==="PITCHING",thS=s.thS||SIDE[state.hand],tlS=thS===SIDE.L?SIDE.R:SIDE.L,fls=s.flags||[],hotS={};
+    const PM=(s.mode||state.mode)==="PITCHING",thS=s.thS||SIDE[s.hand||state.hand],tlS=thS===SIDE.L?SIDE.R:SIDE.L,fls=s.flags||[],hotS={};
     const mark=(es,c)=>es.forEach(([p,q])=>hotS[p+"-"+q]=c);
     if(fls.includes("elbow_drop"))mark([[thS.sh,thS.el],[thS.el,thS.wr]],"#FF4D4D");
     if(fls.includes("knee_flex"))mark([[tlS.hip,tlS.kn],[tlS.kn,tlS.an]],"#FF4D4D");
@@ -1771,24 +1780,24 @@ function openSlow(s,j){
         ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle="rgba(255,255,255,.85)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(ex,by+BH/2);ctx.lineTo(it.j[0],it.j[1]);ctx.stroke();ctx.restore();
         ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(it.j[0],it.j[1],4,0,7);ctx.fill();
         ctx.fillStyle="rgba(16,20,26,.78)";ctx.fillRect(bx,by,BW,BH);ctx.strokeStyle="rgba(255,255,255,.35)";ctx.lineWidth=1;ctx.strokeRect(bx,by,BW,BH);
-        ctx.fillStyle="#fff";ctx.font="700 26px system-ui,sans-serif";ctx.fillText(it.v,bx+10,by+35);
-        ctx.font="600 16px system-ui,sans-serif";ctx.fillStyle="rgba(255,255,255,.9)";ctx.fillText(it.name,bx+(it.v.length>3?84:70),by+32)})};
+        ctx.fillStyle="#fff";ctx.font="700 26px system-ui,sans-serif";ctx.fillText(it.v,bx+10,by+35);const vw2=ctx.measureText(it.v).width;
+        ctx.font="600 16px system-ui,sans-serif";ctx.fillStyle="rgba(255,255,255,.9)";ctx.fillText(it.name,bx+18+vw2,by+32)})};
     const draw=()=>{
-      if($("sheet").hidden){try{vid.pause();vid.playbackRate=1}catch{}cancelAnimationFrame(raf);if(rec&&rec.state!=="inactive"){rec.cancelled=true;rec.stop()}return}
-      if(!paused&&vid.currentTime>=b-.02){if(recording){paused=true;vid.pause();recording=false;rec.stop()}else vid.currentTime=a}
-      try{ctx.drawImage(vid,x,y,w,h,0,0,CW,CH);
-        if(state.blur){/* 재생 중인 장면은 분석한 장면 사이에 있으므로 앞뒤 두 장면의 얼굴 위치를 모두 가린다 */
-          const ct=vid.currentTime;let q0=null,q1=null;for(const e of PL){if(e.t<=ct&&ct-e.t<=.25)q0=e;if(e.t>ct&&e.t-ct<=.25&&!q1)q1=e}
+      if($("sheet").hidden){try{V.pause();V.playbackRate=1;if(!live){V.remove();URL.revokeObjectURL(V.src)}}catch{}cancelAnimationFrame(raf);if(rec&&rec.state!=="inactive"){rec.cancelled=true;rec.stop()}return}
+      if(!paused&&(V.ended||V.currentTime>=b-.02)){if(recording){paused=true;V.pause();recording=false;rec.stop()}else{V.currentTime=a;if(V.paused)V.play().catch(()=>{})}}
+      try{ctx.drawImage(V,x,y,w,h,0,0,CW,CH);
+        if(live&&state.blur){/* 재생 중인 장면은 분석한 장면 사이에 있으므로 앞뒤 두 장면의 얼굴 위치를 모두 가린다 */
+          const ct=V.currentTime;let q0=null,q1=null;for(const e of PL){if(e.t<=ct&&ct-e.t<=.25)q0=e;if(e.t>ct&&e.t-ct<=.25&&!q1)q1=e}
           const L=[q0,q1].filter(Boolean).map(q=>({kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}));const q=L.length;
           if(q)pixelateFaces(ctx,L,k);
           else ctx.fillRect(0,0,CW,CH*.3)}
-        if(showSk)overlay(vid.currentTime);
+        if(showSk)overlay(V.currentTime);
         ctx.font="600 15px system-ui,sans-serif";ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(0,CH-26,CW,26);ctx.fillStyle="#fff";ctx.fillText(`PlayBall AI · #${s.n} · ${rate}배속`,10,CH-8)}catch(err){}
       raf=requestAnimationFrame(draw)};
-    const go=t=>{vid.currentTime=clamp(t,a,b)};
-    body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{if(recording)return;rate=+bt.dataset.r;vid.playbackRate=rate;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;vid.play().catch(()=>{});pp.textContent="일시정지"}});
-    body.querySelectorAll("[data-j]").forEach(bt=>bt.onclick=()=>{if(recording)return;go(s.phases[+bt.dataset.j].t);if(!paused){paused=true;vid.pause();pp.textContent="재생"}});
-    pp.onclick=()=>{if(recording)return;paused=!paused;if(paused){vid.pause();pp.textContent="재생"}else{vid.play().catch(()=>{});pp.textContent="일시정지"}};
+    const go=t=>{V.currentTime=clamp(t,a,b)};
+    body.querySelectorAll("[data-r]").forEach(bt=>bt.onclick=()=>{if(recording)return;rate=+bt.dataset.r;V.playbackRate=rate;body.querySelectorAll("[data-r]").forEach(o=>o.classList.toggle("primary",o===bt));if(paused){paused=false;V.play().catch(()=>{});pp.textContent="일시정지"}});
+    body.querySelectorAll("[data-j]").forEach(bt=>bt.onclick=()=>{if(recording)return;go(s.phases[+bt.dataset.j].t);if(!paused){paused=true;V.pause();pp.textContent="재생"}});
+    pp.onclick=()=>{if(recording)return;paused=!paused;if(paused){V.pause();pp.textContent="재생"}else{V.play().catch(()=>{});pp.textContent="일시정지"}};
     /* 느린 영상 저장: 화면에 그리는 장면을 그대로 녹화한다 (재생 속도가 느린 만큼 영상도 느리게 담긴다) */
     const sv=body.querySelector("#slowSave"),note=body.querySelector("#slowNote");
     sv.onclick=async()=>{
@@ -1796,12 +1805,12 @@ function openSlow(s,j){
       if(!cv.captureStream||typeof MediaRecorder==="undefined"){note.textContent="이 기기에서는 영상 저장을 지원하지 않아요.";return}
       const mt=["video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"].find(t=>MediaRecorder.isTypeSupported?.(t))||"",ext=mt.includes("mp4")?"mp4":"webm";
       sv.disabled=true;sv.textContent=`녹화 중… (약 ${Math.ceil((b-a)/rate)}초)`;
-      paused=true;vid.pause();vid.playbackRate=rate;await seekTo(a);
+      paused=true;V.pause();V.playbackRate=rate;await seekV(a);
       const chunks=[];
       try{rec=new MediaRecorder(cv.captureStream(30),mt?{mimeType:mt,videoBitsPerSecond:4e6}:{})}catch(err){rec=new MediaRecorder(cv.captureStream(30))}
       rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
       const done=new Promise(r=>rec.onstop=r);
-      rec.start(250);recording=true;paused=false;vid.play().catch(()=>{});pp.textContent="일시정지";
+      rec.start(250);recording=true;paused=false;V.play().catch(()=>{});pp.textContent="일시정지";
       await done;const cancelled=rec.cancelled;rec=null;recording=false;
       if(!cancelled&&chunks.length){
         const blob=new Blob(chunks,{type:(mt||"video/webm").split(";")[0]}),name=`PlayBall_${ymd()}_${s.n}번_${rate}배속.${ext}`;
@@ -1809,10 +1818,10 @@ function openSlow(s,j){
         try{if(dl)await dl.save({filename:name,data:blob});else viaLink();note.textContent="저장했어요. 사진 앱이나 다운로드 폴더에서 확인해 주세요."}
         catch(err){if(!(err&&err.code==="declined")){try{viaLink();note.textContent="저장했어요."}catch(e2){note.textContent="영상을 저장하지 못했어요."}}}}
       sv.disabled=false;sv.textContent="⬇ 느린 영상 저장";
-      if(!$("sheet").hidden){paused=false;vid.currentTime=a;vid.play().catch(()=>{})}};
+      if(!$("sheet").hidden){paused=false;V.currentTime=a;V.play().catch(()=>{})}};
     /* 고칠 점 같이 확인하기: 단계별로 멈춰 서서 체크 질문에 답한다. AI가 문제를 찾은 항목을 먼저 보여준다 */
     const rvBox=body.querySelector("#rvBox"),rvBtn=body.querySelector("#rvStart");
-    const sn=s.snap||{},fl=s.flags||[],P=state.mode==="PITCHING";
+    const sn=s.snap||{},fl=s.flags||[],P=(s.mode||state.mode)==="PITCHING";
     const CK=(P?[
       {j:0,k:"balance",l:"균형점",q:"무릎을 가장 높이 들었을 때 몸이 홈 쪽으로 먼저 쏠리거나 뒤로 기울지 않고, 축발 위에 균형 있게 서 있나요?",tip:"균형점에서 1초 멈췄다가 던지는 연습을 해보세요."},
       {j:1,k:"armFC",l:"착지 때 팔 높이",q:"앞발이 땅에 닿을 때 던지는 팔꿈치가 어깨 높이 근처까지 올라와 있나요?",ai:sn.abd!=null?`AI 측정: 어깨 각도 ${Math.round(sn.abd)}° (권장 90~100°)`:null,bad:sn.abd!=null&&(sn.abd<80||sn.abd>110),tip:"팔이 늦게 올라오면 어깨·팔꿈치 부담이 커져요. 앞발을 내딛을 때 팔을 'L'자로 미리 올려두는 연습을 해보세요."},
@@ -1826,9 +1835,9 @@ function openSlow(s,j){
       {j:2,k:"tilt",l:"몸통 기울기",q:"공을 맞힐 때 몸통이 옆으로 많이 기울지 않았나요?",ai:sn.tilt!=null?`AI 측정: 몸통 기울기 ${Math.round(sn.tilt)}° (권장 ${tiltLim("BATTING")[0]}° 이하)`:null,bad:sn.tilt!=null&&sn.tilt>tiltLim("BATTING")[0],tip:"몸통을 세운 채로 회전하는 연습을 해보세요."},
       {j:3,k:"follow",l:"팔로스루",q:"배트를 끝까지 돌려 손이 어깨 높이까지 올라갔나요?",ai:sn.ftDone!=null?`AI 판단: 팔로스루 ${sn.ftDone?"완성":"짧음"}`:null,bad:sn.ftDone===false,tip:"공을 친 뒤에도 배트를 등 뒤까지 끝까지 돌려 보세요."}
     ]).filter(c=>s.phases[c.j]&&s.phases[c.j].t!=null).sort((x,y)=>(y.bad?1:0)-(x.bad?1:0));
-    if(!CK.length)rvBtn.hidden=true;
+    if(!CK.length||!live)rvBtn.hidden=true;
     let ri=0;const ans={};
-    const stop=()=>{if(!paused){paused=true;vid.pause();pp.textContent="재생"}};
+    const stop=()=>{if(!paused){paused=true;V.pause();pp.textContent="재생"}};
     const showStep=()=>{
       if(ri>=CK.length)return showSum();const c=CK[ri];go(s.phases[c.j].t);stop();
       rvBox.innerHTML=`<div class="st">${ri+1}/${CK.length} · ${s.phases[c.j].l} 장면${c.bad?" · AI가 찾은 문제":""}</div><div class="q">${c.q}</div>${c.ai?`<div class="ai ${c.bad?"bad":"good"}">${c.ai}</div>`:""}
@@ -1845,11 +1854,57 @@ function openSlow(s,j){
         <p class="muted" style="font-size:.78rem;margin-top:6px">확인 결과는 오늘 기록에 함께 저장했어요.</p>
         <div class="ans" style="margin-top:6px"><button type="button" class="btn" data-a="again">다시 확인하기</button></div>`;
       rvBox.querySelector("[data-a=again]").onclick=()=>{ri=0;showStep()};
-      paused=false;vid.currentTime=a;vid.play().catch(()=>{});pp.textContent="일시정지"};
+      paused=false;V.currentTime=a;V.play().catch(()=>{});pp.textContent="일시정지"};
     rvBtn.onclick=()=>{rvBtn.hidden=true;rvBox.hidden=false;ri=0;showStep();rvBox.scrollIntoView({block:"nearest"})};
-    vid.muted=true;vid.playbackRate=.25;go(s.phases[j]&&s.phases[j].t!=null?s.phases[j].t-.15:a);vid.play().catch(()=>{});raf=requestAnimationFrame(draw);
+    V.muted=true;V.playbackRate=.25;go(s.phases[j]&&s.phases[j].t!=null?s.phases[j].t-.15:a);V.play().catch(()=>{});raf=requestAnimationFrame(draw);
   });
 }
+
+/* ── 기록용 짧은 영상: 동작마다 선수 주변을 잘라 얼굴을 가린 채 저장 (관절 위치는 숫자로 따로 저장) ── */
+const CLIPS={db:null,
+  open(){return this.db||(this.db=new Promise((res,rej)=>{const r=indexedDB.open("playball_clips",1);r.onupgradeneeded=()=>r.result.createObjectStore("c",{keyPath:"sid"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}))},
+  async tx(mode,fn){const d=await this.open();return new Promise((res,rej)=>{const t=d.transaction("c",mode),st=t.objectStore("c");const out=fn(st);t.oncomplete=()=>res(out&&out.result);t.onerror=()=>rej(t.error)})},
+  put(v){return this.tx("readwrite",st=>st.put(v))},
+  get(id){return this.tx("readonly",st=>st.get(id))},
+  async prune(keep=30){const all=await this.tx("readonly",st=>st.getAll())||[];all.sort((p,q)=>q.ts-p.ts);
+    for(const v of all.slice(keep))await this.tx("readwrite",st=>st.delete(v.sid))}};
+async function recordClips(an){
+  if(typeof MediaRecorder==="undefined"||!HTMLCanvasElement.prototype.captureStream)return null;
+  const mt=["video/mp4;codecs=avc1","video/mp4","video/webm;codecs=vp9","video/webm"].find(t=>MediaRecorder.isTypeSupported?.(t))||"";
+  const out=[];
+  for(const s of an.swings){
+    if(state.cancel)break;const R=slowRange(s);if(!R)continue;
+    const{a,b,x,y,w,h,PL}=R,CW=432,CH=Math.round(CW*h/w),k=CW/w,c=document.createElement("canvas");c.width=CW;c.height=CH;const ctx=c.getContext("2d");
+    const paint=()=>{try{ctx.drawImage(vid,x,y,w,h,0,0,CW,CH);
+      if(state.blur){const ct=vid.currentTime;let q0=null,q1=null;for(const e of PL){if(e.t<=ct&&ct-e.t<=.25)q0=e;if(e.t>ct&&e.t-ct<=.25&&!q1)q1=e}
+        const L=[q0,q1].filter(Boolean).map(q=>({kp:q.kp.map(p=>[p[0]-x,p[1]-y,p[2]>=.3?1:0]),box:[q.box[0]-x,q.box[1]-y,q.box[2]-x,q.box[3]-y]}));
+        if(L.length)pixelateFaces(ctx,L,k);else ctx.fillRect(0,0,CW,CH*.3)}}catch(err){}};
+    try{
+      vid.muted=true;vid.playbackRate=1;await seekTo(a);paint();
+      const chunks=[];let mr;try{mr=new MediaRecorder(c.captureStream(30),mt?{mimeType:mt,videoBitsPerSecond:1.5e6}:{})}catch(err){mr=new MediaRecorder(c.captureStream(30))}
+      mr.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};const done=new Promise(r=>mr.onstop=r);
+      mr.start(250);await vid.play().catch(()=>{});
+      await new Promise(r=>{const t0=performance.now(),lim=(b-a)*1000+4000;const step=()=>{paint();if(vid.currentTime>=b||vid.paused&&vid.currentTime>=b-.05||performance.now()-t0>lim){r();return}requestAnimationFrame(step)};requestAnimationFrame(step)});
+      vid.pause();mr.stop();await done;
+      if(chunks.length){const sc=k;out.push({n:s.n,blob:new Blob(chunks,{type:(mt||"video/webm").split(";")[0]}),meta:{n:s.n,mode:state.mode,hand:state.hand,thS:s.thS?(s.thS===SIDE.L?"L":"R"):null,
+        flags:s.flags||[],snap:s.snap?{abd:s.snap.abd,elbowH:s.snap.elbowH,tilt:s.snap.tilt,headMove:s.snap.headMove,ftDone:s.snap.ftDone}:{},
+        phases:(s.phases||[]).map(p=>({l:p.l,t:p.t==null?null:+(p.t-a).toFixed(3)})),cw:CW,ch:CH,dur:+(b-a).toFixed(3),
+        PL:PL.map(q=>({t:+(q.t-a).toFixed(3),kp:q.kp.map(p=>[+((p[0]-x)*sc).toFixed(1),+((p[1]-y)*sc).toFixed(1),+p[2].toFixed(2)]),box:[0,0,CW,CH]}))}})}
+    }catch(err){console.error(err)}
+  }
+  try{vid.pause();vid.playbackRate=1}catch{}
+  return out.length?out:null}
+async function openClips(rec){
+  let v=null;try{v=await CLIPS.get(rec.id)}catch(err){console.error(err)}
+  if(!v||!v.clips||!v.clips.length){openSheet("느린 영상",body=>{body.innerHTML=`<p class="muted" style="font-size:.88rem;line-height:1.6">이 기기에 저장된 영상이 없어요.<br>영상은 분석한 기기에만, 최근 기록 30개까지 보관돼요.</p>`});return}
+  const play=(cl,j)=>{const V=document.createElement("video");V.muted=true;V.playsInline=true;V.setAttribute("playsinline","");V.preload="auto";
+    V.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none";document.body.appendChild(V);V.src=URL.createObjectURL(cl.blob);
+    const m=cl.meta,s={n:m.n,mode:m.mode,hand:m.hand,thS:m.thS?SIDE[m.thS]:null,flags:m.flags,snap:m.snap,phases:m.phases.map(p=>({l:p.l,t:p.t}))};
+    const go=()=>slowView({V,s,j,live:false,a:0,b:Math.min(m.dur,isFinite(V.duration)?V.duration:m.dur),x:0,y:0,w:m.cw,h:m.ch,PL:m.PL});
+    if(V.readyState>=1)go();else V.addEventListener("loadedmetadata",go,{once:true})};
+  if(v.clips.length===1)return play(v.clips[0],2);
+  openSheet("느린 영상 고르기",body=>{body.innerHTML=`<p class="muted" style="font-size:.84rem;margin-bottom:8px">볼 동작을 골라 주세요.</p><div style="display:flex;gap:6px;flex-wrap:wrap">${v.clips.map((c,i)=>`<button type="button" class="btn" data-i="${i}" style="padding:8px 14px">#${c.n} 보기</button>`).join("")}</div>`;
+    body.querySelectorAll("[data-i]").forEach(bt=>bt.onclick=()=>play(v.clips[+bt.dataset.i],2))})}
 function trackNear(t){let best=null,bd=1.5;for(const e of state.trackLog||[]){const d=Math.abs(e[0]-t);if(d<bd){bd=d;best=e}}return best}
 async function poseNear(t,c,h){
   await seekTo(t);const ps=await detectCrop(c[0],c[1],clamp(h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2),h<.15*Math.max(vid.videoWidth,vid.videoHeight)?320:256);
@@ -2064,6 +2119,8 @@ function saveSession(S){
     spAvg:sp.length?median(sp):null,spMax:sp.length?Math.max(...sp):null,spN:sp.length,img,
     review:null,med:Object.fromEntries(Object.entries(S.med).filter(([,v])=>v!=null).map(([k,v])=>[k,Math.round(v*1000)/1000])),focus:state.C&&state.C.focus?state.C.focus.k:null};
   state.lastRecId=rec.id;
+  if(state.clips&&state.clips.length){rec.clipN=state.clips.length;const cl=state.clips;state.clips=null;
+    CLIPS.put({sid:rec.id,pid,ts:rec.ts,clips:cl}).then(()=>CLIPS.prune(30)).catch(err=>console.error(err))}
   if(CLOUD.ready){CLOUD.sess.push(rec);cloudWrite(`${cloudBase()}/sessions/${rec.id}`,rec);
     /* 계정 저장: 리포트 이미지는 선수별 최근 60개까지 보관 */
     const mine=CLOUD.sess.filter(x=>x.pid===pid&&x.img).sort((a,b)=>b.ts-a.ts);
@@ -2116,6 +2173,7 @@ function renderHistory(){
     top.append(el("b",null,`${fmtDate(x.ts)} · ${x.mode==="BATTING"?"타격":"투구"}`));const pl=el("span","pill",x.lv);pl.style.background=`var(--${x.lvKey})`;top.appendChild(pl);
     meta.append(top,el("span","muted",`동작 ${x.n}회 · 부하 ${x.avg==null?"-":Math.round(x.avg)+"%"} · 신뢰도 ${x.qg||"-"}`));
     if(x.spAvg)meta.appendChild(el("span","num",`구속 약 ${Math.round(x.spAvg)}km/h (최고 ${Math.round(x.spMax)})`));
+    if(x.clipN){const bt=el("button","phbtn","▶ 느린 영상 보기");bt.type="button";bt.style.cssText="font-size:.78rem;padding:2px 0;align-self:flex-start";bt.onclick=ev=>{ev.stopPropagation();openClips(x)};meta.appendChild(bt)}
     if(x.review)meta.appendChild(Object.assign(el("span","muted",`슬로모션 점검: ${x.review.fix.length?"고칠 점 "+x.review.fix.join(", "):"고칠 점 없음"}`),{style:"font-size:.76rem"}));
     if(x.video)meta.appendChild(Object.assign(el("span","muted",x.video),{style:"font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"}));
     it.appendChild(meta);it.onclick=()=>openSession(x);box.appendChild(it)});
