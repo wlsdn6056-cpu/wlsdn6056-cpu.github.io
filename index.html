@@ -710,13 +710,14 @@ class Analyzer{
 }
 
 function summarize(an){
-  const sw=an.swings,n=sw.length,fl=sw.filter(s=>s.flags.length),ratio=n?fl.length/n:0;
+  const sw=an.swings,n=sw.length,fl=sw.filter(s=>s.flags.length);
+  const um=s=>swingLevel(s)[0]==="측정 부족",mN=sw.filter(s=>!um(s)).length,ratio=mN?fl.length/mN:0;   /* 측정 부족 동작은 종합 판정·대표 동작·부하 지수에서 뺀다 */
   let verdict,lv;
-  if(n<CFG.minSwings){verdict="표본 부족";lv="idle"}
+  if(mN<CFG.minSwings){verdict="표본 부족";lv="idle"}
   else if(ratio<.15){verdict="안정 (양호)";lv="good"}else if(ratio<.35){verdict="관찰 권장";lv="watch"}else{verdict="자세 점검 필요";lv="alert"}
   const tips={};sw.forEach(s=>s.flags.forEach(f=>tips[f]=(tips[f]||0)+1));
-  const sc=sw.filter(s=>s.thumb);
-  const scored=sw.filter(s=>s.fs&&s.fs.length);
+  const sc=sw.filter(s=>s.thumb&&!um(s));
+  const scored=sw.filter(s=>s.fs&&s.fs.length&&!um(s));
   return{n,scoredN:scored.length,flaggedN:fl.length,ratio,verdict,lv,avg:scored.length?median(scored.map(s=>s.scoreMax)):null,
     tips:Object.entries(tips).sort((a,b)=>b[1]-a[1]),
     best:sc.length?sc.reduce((a,b)=>b.scoreMax<a.scoreMax?b:a):null,
@@ -850,9 +851,10 @@ function drawFrame(can,maxW=960){
   if(can.width!==Math.round(vw*s)){can.width=Math.round(vw*s);can.height=Math.round(vh*s)}
   can.getContext("2d").drawImage(vid,0,0,can.width,can.height);return s;
 }
-function drawSkeleton(ctx,kp,valid,s,color,lw=3){
-  ctx.lineWidth=lw;ctx.lineCap="round";ctx.strokeStyle=color;
-  for(const[a,b]of SKELETON)if(valid[a]&&valid[b]){ctx.beginPath();ctx.moveTo(kp[a][0]*s,kp[a][1]*s);ctx.lineTo(kp[b][0]*s,kp[b][1]*s);ctx.stroke()}
+function drawSkeleton(ctx,kp,valid,s,color,lw=3,hot){
+  ctx.lineWidth=lw;ctx.lineCap="round";
+  /* hot: {"a-b":색} — 권장 범위를 벗어난 부위의 선만 주황·빨강으로 */
+  for(const[a,b]of SKELETON)if(valid[a]&&valid[b]){ctx.strokeStyle=(hot&&(hot[a+"-"+b]||hot[b+"-"+a]))||color;ctx.lineWidth=hot&&(hot[a+"-"+b]||hot[b+"-"+a])?lw*1.6:lw;ctx.beginPath();ctx.moveTo(kp[a][0]*s,kp[a][1]*s);ctx.lineTo(kp[b][0]*s,kp[b][1]*s);ctx.stroke()}
   ctx.fillStyle="#fff";for(let i=5;i<17;i++)if(valid[i]){ctx.beginPath();ctx.arc(kp[i][0]*s,kp[i][1]*s,lw*1.1,0,7);ctx.fill()}
 }
 function pixelateFaces(ctx,list,s){
@@ -891,7 +893,7 @@ function poseSane(kp,box,Tref){
   const ex=.2*Math.max(bw,bh);for(let i=0;i<17;i++)if(ok(i)&&(kp[i][0]<box[0]-ex||kp[i][0]>box[2]+ex||kp[i][1]<box[1]-ex||kp[i][1]>box[3]+ex))return false;
   return true;
 }
-function makeThumb(box,kp,valid,blur){
+function makeThumb(box,kp,valid,blur,hot){
   const bw=box[2]-box[0],bh=box[3]-box[1],vw=vid.videoWidth,vh=vid.videoHeight;
   let h=bh*1.25,w=h*.75,cx=(box[0]+box[2])/2,cy=(box[1]+box[3])/2;
   w=Math.max(w,bw*1.3);h=w/.75;
@@ -901,8 +903,16 @@ function makeThumb(box,kp,valid,blur){
   const k=300/w;ctx.drawImage(vid,x,y,w,h,0,0,300,h*k);
   const sk=kp.map(p=>[(p[0]-x),(p[1]-y)]);
   if(blur)pixelateFaces(ctx,[{kp:kp.map((p,i)=>[p[0]-x,p[1]-y,valid[i]?1:0]),box:[box[0]-x,box[1]-y,box[2]-x,box[3]-y]}],k);
-  drawSkeleton(ctx,sk,valid,k,"#FFD24A",3);
+  drawSkeleton(ctx,sk,valid,k,"#FFD24A",3,hot);
   return c;
+}
+/* 부위별 위험도(sv) → 강조할 선. 0.5 이상 빨강, 0.25 이상 주황 */
+function hotEdges(sv,th,tl){
+  const H={},col=v=>v>=.5?"#FF4D4D":v>=.25?"#FF9F43":null,put=(es,v)=>{const c=col(v||0);if(c)es.forEach(([a,b])=>H[a+"-"+b]=c)};
+  if(th)put([[th.sh,th.el],[th.el,th.wr]],sv.elbow_drop);
+  if(tl)put([[tl.hip,tl.kn],[tl.kn,tl.an]],sv.knee_flex);
+  put([[5,11],[6,12]],sv.trunk_tilt);
+  return H;
 }
 
 /* --- 1. 영상 선택 --- */
@@ -1144,7 +1154,7 @@ function renderResult(complete){
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
   an.swings.forEach(s=>{const[lv,k]=swingLevel(s);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
-    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}${s.snap&&(s.snap.headMove!=null||s.snap.ftDone!=null)?`<span class="muted" style="font-size:.76rem">${[s.snap.headMove!=null?`머리 이동 ${Math.round(s.snap.headMove*100)}%`:"",s.snap.ftDone!=null?(s.snap.ftDone?"팔로스루 완성":"팔로스루 짧음"):""].filter(Boolean).join(" · ")}</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
+    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}${s.snap&&(s.snap.headMove!=null||s.snap.ftDone!=null)?`<span class="muted" style="font-size:.76rem">${[s.snap.headMove!=null?`머리 이동 ${Math.round(s.snap.headMove*100)}%`:"",s.snap.ftDone!=null?(s.snap.ftDone?"팔로스루 완성":"팔로스루 짧음"):""].filter(Boolean).join(" · ")}</span>`:""}${s.preJudge?`<span class="muted" style="font-size:.74rem">공 놓기 직전 장면으로 판정</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
     if(s.phases&&s.phases.some(p=>p.thumb)){const ph=document.createElement("div");ph.className="ph";
       ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
       d.insertBefore(ph,d.querySelector(".meta"));
@@ -1196,7 +1206,7 @@ function makeReport(S,complete){
 
   card(y0,420);
   x.fillStyle=P.ink;x.font=`600 34px ${F}`;x.fillText("대표 동작",84,y0+58);
-  [["가장 안정적인 동작",S.best],["가장 주의가 필요한 동작",S.n>1?S.worst:null]].forEach(([t,s],i)=>{
+  [["가장 안정적인 동작",S.best],["가장 주의가 필요한 동작",S.worst&&S.worst!==S.best?S.worst:null]].forEach(([t,s],i)=>{
     const bx=84+i*470;x.fillStyle=P.mut;x.font=`26px ${F}`;x.fillText(t,bx,y0+104);
     if(s&&s.thumb){x.drawImage(s.thumb,bx,y0+124,195,260);const[l2,k2]=swingLevel(s);
       x.fillStyle=P.ink;x.font=`30px ${FM}`;x.fillText(`#${s.n}`,bx+215,y0+164);
@@ -1238,7 +1248,7 @@ function swingPages(){
       x.fillStyle=RP.ink;x.font=`34px ${RFM}`;x.fillText(`#${s.n}`,tx,cy+56);
       x.fillStyle=RP.mut;x.font=`22px ${RFM}`;x.fillText(fmt1(s.peakT),tx,cy+88);
       x.fillStyle=RP[k]||RP.idle;x.font=`800 42px ${RFD}`;x.fillText(lv,tx,cy+142);
-      x.fillStyle=RP.ink;x.font=`24px ${RF}`;x.fillText(`부하 ${Math.round(s.scoreMax)}%`,tx,cy+180);
+      x.fillStyle=RP.ink;x.font=`24px ${RF}`;x.fillText(`부하 ${lv==="측정 부족"?"-":Math.round(s.scoreMax)+"%"}`,tx,cy+180);
       const r=v=>v==null?"-":Math.round(v);
       const lines=[`몸통 기울기 ${r(s.snap.tilt)}°`,`앞무릎 ${r(s.snap.knee)}°`];
       if(state.mode==="PITCHING"){lines.push(`팔꿈치 높이 ${s.snap.elbowH==null?"-":(s.snap.elbowH>=0?"+":"")+Math.round(s.snap.elbowH*100)+"%"}`);lines.push(`보폭 ${r(s.ext.stride_max)}${s.ext.stride_max==null?"":"%"}`)}
@@ -1584,6 +1594,25 @@ async function refineRelease(pop,ctr){
 /* 투구 판정은 공을 놓는 순간 자세로: 손목 속도가 가장 빠른 순간(이미 팔이 내려온 뒤) 대신, 공 놓는 순간의 팔꿈치·몸통·무릎을 다시 재고 대표 장면도 그 순간으로 바꾼다 */
 async function resnapAtRelease(an){
   const hs=SIDE[state.hand],ls=SIDE[state.hand==="R"?"L":"R"],PL=state.poseLog||[];if(!PL.length)return;let Tref;
+  /* 공 놓는 순간이 흐리면(팔이 너무 빨라 AI가 손목을 놓침) 바로 직전, 팔을 뒤로 젖혀 든 장면에서 팔꿈치 높이를 판정한다.
+     이때는 팔이 느려 또렷하게 보이고, 팔꿈치 처짐은 원래 이 단계에서 보는 게 부상 예방 기준에도 맞다 */
+  const preJudge=async(s,tc)=>{
+    const C=PL.filter(q=>q.t>=tc-.5&&q.t<=tc+.05).sort((a,b)=>b.t-a.t);
+    for(const q of C){const k=q.kp;if(![5,6,11,12].every(i=>k[i][2]>=.3))continue;
+      const T=Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1;
+      const vL=k[9][2]>=.3&&k[7][2]>=.3,vR=k[10][2]>=.3&&k[8][2]>=.3,uL=vL?(k[5][1]-k[9][1])/T:-9,uR=vR?(k[6][1]-k[10][1])/T:-9;
+      let th=null;
+      if(vL&&vR){if(Math.max(uL,uR)>=.1&&Math.abs(uL-uR)>=.5)th=uL>uR?SIDE.L:SIDE.R}   /* 두 손이 보이면: 어깨 높이 이상으로 든, 반대 손보다 분명히 높은 손 */
+      else if(vL||vR){if(Math.max(uL,uR)>=.3)th=vL?SIDE.L:SIDE.R}                        /* 한 손만 보이면: 어깨보다 한참 위에 있을 때만 던지는 손으로 */
+      if(!th)continue;
+      const eH=(k[th.sh][1]-k[th.el][1])/T;if(Math.max(uL,uR)-eH>.6)continue;   /* 손은 위인데 팔꿈치가 너무 아래 = 팔꿈치 위치를 잘못 찾음 */
+      const sn=Object.assign(s.snap||{},{elbowH:eH,tilt:null,knee:null,elbow:null});
+      const sv={elbow_drop:severity(sn.elbowH,...LIMITS.elbow_drop)};
+      s.snap=sn;s.snapT=q.t;s.badPose=false;s.preJudge=true;s.thS=th;
+      const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(f=>sv[f]>=.5);
+      try{await seekTo(q.t);const im=makeThumb(q.box,k,k.map(p=>p[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,null));if(im)s.thumb=im}catch(err){console.error(err)}
+      return true}
+    return false};
   for(const s of an.swings){
     if(state.cancel)return;
     let rel=s.release;
@@ -1592,13 +1621,15 @@ async function resnapAtRelease(an){
       for(const q of PL){if(q.t<s.relBest[0]-.2||q.t>s.relBest[0]+.05)continue;const k=q.kp;
         for(const[sh,wr]of[[5,9],[6,10]])if(k[sh][2]>.3&&k[wr][2]>.3){const T=Math.hypot((k[5][0]+k[6][0])/2-(k[11][0]+k[12][0])/2,(k[5][1]+k[6][1])/2-(k[11][1]+k[12][1])/2)||1,v=(k[sh][1]-k[wr][1])/T;if(v>bv){bv=v;rel=q.t}}}
       if(bv<.25){/* 손이 어깨 위로 올라간 장면을 못 찾음 = 공 놓는 순간이 흐리거나 가려짐 → 엉뚱한 장면으로 판정하지 않는다 */
+        if(await preJudge(s,s.relBest[0]))continue;
         let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.relBest[0]);if(dd<bd){bd=dd;q=e2}}
         s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.flags=[];
         if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
         continue}}
     if(rel==null){const P=PL.filter(e=>e.t>=s.peakT-.4&&e.t<=s.peakT+.05&&e.kp[hs.wr][2]>.3&&e.kp[hs.sh][2]>.3&&e.kp[hs.wr][1]<e.kp[hs.sh][1]);
       if(P.length)rel=P.reduce((a,b)=>b.kp[hs.wr][1]<a.kp[hs.wr][1]?b:a).t}
-    if(rel==null&&s.armUnclear){/* 선수가 작거나 흐려 팔 동작을 또렷하게 못 봄 → 자세 판정 없이 '측정 부족'으로 남긴다 */
+    if(rel==null&&s.armUnclear){/* 선수가 작거나 흐려 팔 동작을 또렷하게 못 봄 → 직전 장면에서도 못 재면 '측정 부족'으로 남긴다 */
+      if((s.sN||0)<.5*(s.wN||1)&&await preJudge(s,s.peakT))continue;   /* 선수가 작게 찍힌 경우는 직전 장면도 흐려서 판정하지 않는다 */
       let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.peakT);if(dd<bd){bd=dd;q=e2}}
       s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.smallArm=true;s.flags=[];
       if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
@@ -1607,6 +1638,7 @@ async function resnapAtRelease(an){
     if(Tref===undefined){const ts=PL.filter(q=>[5,6,11,12].every(i=>q.kp[i][2]>=CFG.kpConf)).map(q=>Math.hypot((q.kp[5][0]+q.kp[6][0])/2-(q.kp[11][0]+q.kp[12][0])/2,(q.kp[5][1]+q.kp[6][1])/2-(q.kp[11][1]+q.kp[12][1])/2));Tref=ts.length>=10?pct(ts,75):null}
     const near=PL.filter(q=>Math.abs(q.t-rel)<=.1).sort((a,b)=>Math.abs(a.t-rel)-Math.abs(b.t-rel));if(!near.length)continue;
     let e=near.find(q=>poseSane(q.kp,q.box,Tref));
+    if(!e&&await preJudge(s,rel))continue;
     if(!e){const q=near[0];s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.snapT=q.t;s.badPose=true;s.flags=[];
       try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
       continue}
@@ -1617,6 +1649,8 @@ async function resnapAtRelease(an){
     let th=hs,tl=ls;if(ok(5,6,9,10)){const ua=kp[5][1]-kp[9][1],ub=kp[6][1]-kp[10][1];if(Math.abs(ua-ub)>.3*torso){th=ua>ub?SIDE.L:SIDE.R;tl=ua>ub?SIDE.R:SIDE.L}}
     const sn=s.snap||{};
     if(ok(th.sh,th.el))sn.elbowH=(kp[th.sh][1]-kp[th.el][1])/torso;
+    /* 던지는 손목이 안 보이거나, 손은 높이 들렸는데 팔꿈치가 한참 아래로 잡히면(팔뚝 길이로 불가능) 팔꿈치를 잘못 찾았을 수 있다 → 직전 장면에서 다시 판정 */
+    if(sn.elbowH!=null&&(!ok(th.wr)||(kp[th.sh][1]-kp[th.wr][1])/torso-sn.elbowH>.6)){sn.elbowH=null;if(await preJudge(s,rel))continue}
     s.thS=th;   /* 던지는 쪽 (앞발 착지 순간 어깨 각도를 잴 때 쓴다) */
     sn.tilt=side?null:Math.abs(Math.atan2(ms[0]-mh[0],mh[1]-ms[1])*180/Math.PI);
     if(ok(tl.hip,tl.kn,tl.an))sn.knee=angle3(kp[tl.hip],kp[tl.kn],kp[tl.an]);
@@ -1626,7 +1660,7 @@ async function resnapAtRelease(an){
     if(sn.elbowH!=null)sv.elbow_drop=severity(sn.elbowH,...LIMITS.elbow_drop);
     const sm=s.sideOK?s.ext.stride_max:null;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high));
     const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(k=>sv[k]>=.5).sort();
-    try{await seekTo(e.t);const th=makeThumb(e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
+    try{await seekTo(e.t);const im=makeThumb(e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,tl));if(im)s.thumb=im}catch(err){console.error(err)}
   }
 }
 /* 투구 단계별 장면: 균형점(앞무릎 최고점) → 앞발 착지 → 공 놓기 → 팔로스루.
@@ -2207,7 +2241,7 @@ function coaching(S,an,mode,hist){
   res.filter(r=>r.g<=0).sort((a,b)=>a.g-b.g).forEach(r=>{let t=r.it.goodT(r.v);const tr=trend(r.it.k,r.v,r.it);if(tr&&/좋아졌어요/.test(tr))t+=` ${tr}`;goods.push(t)});
   if(cons&&cons.r<=.6)goods.push(`${each} ${jo(cons.name,"이","가")} 일정해요. 좋은 습관이 자리 잡고 있어요.`);
   const top=ranked[0];
-  if(top&&top.g>0&&(!cons||top.g>=cons.r-1)){
+  if(top&&top.g>=1&&(!cons||top.g>=cons.r-1)){   /* 결과 표의 권장 범위를 벗어난 항목만 '고칠 점'으로 (범위 안이면 아래 '유지하기'로) */
     const it=top.it,v=top.v;let goal;
     if(it.range)goal=`다음 목표: 보폭 키 대비 ${it.range[0]}~${it.range[1]}%`;
     else if(it.dir<0){const tg=Math.max(it.good,it.k==="head"?Math.floor(v*.8*100/5)*5/100:Math.floor(v*.8));goal=`다음 목표: ${it.name} ${it.fmt(tg)} 이하`}
