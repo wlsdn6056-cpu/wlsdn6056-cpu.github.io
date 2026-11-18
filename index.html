@@ -375,6 +375,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <div class="lamp" id="rLamp"></div>
         <div class="lv" id="rLevel">-</div>
         <div class="muted" id="rSub" style="font-size:.88rem">-</div>
+        <div class="muted" id="rTime" style="font-size:.72rem;margin-top:4px"></div>
       </div>
       <div class="stats">
         <div class="stat"><div class="k">감지된 동작</div><div class="v" id="rN">0</div></div>
@@ -816,9 +817,15 @@ async function autoFind(){
 function seekTo(t){return new Promise(res=>{
   /* 아이폰(사파리)은 'seeked' 신호가 와도 화면 그림이 아직 이전 장면일 때가 있다 → 새 장면이 실제로 그려진 뒤(requestVideoFrameCallback)에 넘어간다.
      그렇지 않으면 사진은 다른 순간인데 관절선은 원래 순간 것이 그려져 서로 어긋난다 */
-  let done=false;const fin=()=>{if(done)return;done=true;vid.removeEventListener("seeked",onS);clearTimeout(to);res()};
-  const onS=()=>{if(vid.requestVideoFrameCallback){const t2=setTimeout(fin,150);vid.requestVideoFrameCallback(()=>{clearTimeout(t2);fin()})}else requestAnimationFrame(()=>requestAnimationFrame(fin))};
+  /* 빠르게: 장면 그림 신호를 이동 '전에' 미리 걸어 두어, 그림이 'seeked'보다 먼저 그려져도 놓치지 않는다(전에는 놓치면 매번 0.15초씩 기다렸다).
+     이 기기에서 그림 신호가 오지 않으면(6번 연속) 짧게 두 화면만 기다리는 방식으로 바꾼다 */
+  let done=false,seeked=false,framed=!vid.requestVideoFrameCallback||SEEK.raf,t2=null;
+  const fin=()=>{if(done)return;done=true;vid.removeEventListener("seeked",onS);clearTimeout(to);clearTimeout(t2);res()};
+  if(!framed)vid.requestVideoFrameCallback(()=>{framed=true;SEEK.miss=0;if(seeked)fin()});
+  const onS=()=>{seeked=true;if(framed){if(SEEK.raf||!vid.requestVideoFrameCallback)requestAnimationFrame(()=>requestAnimationFrame(fin));else fin();return}
+    t2=setTimeout(()=>{if(++SEEK.miss>=6)SEEK.raf=true;fin()},90)};
   const to=setTimeout(fin,3000);vid.addEventListener("seeked",onS);vid.currentTime=t;})}
+const SEEK={miss:0,raf:false};
 function waitEvent(ev,ms=8000){return new Promise(res=>{let to;const f=()=>{clearTimeout(to);vid.removeEventListener(ev,f);res(true)};
   to=setTimeout(()=>{vid.removeEventListener(ev,f);res(false)},ms);vid.addEventListener(ev,f)})}
 
@@ -1033,7 +1040,7 @@ async function scan(){
   }
   const dur=vid.duration,step=1/CFG.scanHz,t0=state.pickT;
   const segs=[[t0,dur],[0,t0]];
-  const total=Math.max(1,Math.ceil(dur/step));let done=0;const started=performance.now();
+  const total=Math.max(1,Math.ceil(dur/step));let done=0;const started=performance.now();state.tm={start:started};
   const can=$("scanCan");
   const q={samples:0,tracked:0,conf:[],h:[],oblique:0,views:0};state.q=q;state.trackLog=[];state.poseLog=[];state.throws=[];
   /* 빠르게: 가만히 있는 구간은 초당 7.5장, 움직임·타격음·글러브 소리 근처는 초당 15장으로 촘촘하게 */
@@ -1087,6 +1094,7 @@ async function scan(){
     an.flush();
   }
   try{await wakeLock?.release()}catch{}
+  state.tm.scan=performance.now();
   if(state.mode==="BATTING"&&an.swings.length&&!state.cancel)await makePhases(an);
   if(state.mode==="PITCHING"&&+state.dist>0&&an.swings.length&&!state.cancel)await estimateSpeeds(an);
   if(state.mode==="PITCHING"&&!state.cancel){
@@ -1105,10 +1113,20 @@ async function scan(){
     if(!state.cancel)await makePhases(an);
   }
   state.clips=null;
-  if(!state.cancel&&an.swings.some(s=>s.phases&&s.phases.some(p=>p.t!=null))){setStatus("느린 영상 저장 준비 중","");try{state.clips=await recordClips(an)}catch(err){console.error(err)}}
+  const wantClips=!state.cancel&&an.swings.some(s=>s.phases&&s.phases.some(p=>p.t!=null));
   const complete=!state.cancel;state.cancel=false;
+  state.tm.end=performance.now();
   renderResult(complete);
+  /* 기록용 느린 영상은 결과를 먼저 보여준 뒤 뒤에서 저장한다 (기다리는 시간 줄이기) */
+  if(wantClips&&complete)state.clipJob=(async()=>{const prev=$("status").lastElementChild.textContent,pc=$("status").className.replace("chip ","");
+    setStatus("느린 영상 저장 중","");
+    try{const cl=await recordClips(an);if(cl&&state.an===an&&state.lastRecId)await attachClips(cl)}catch(err){console.error(err)}
+    finally{state.clipJob=null;setStatus(prev,pc)}})();
 }
+async function attachClips(cl){
+  const id=state.lastRecId;await CLIPS.put({sid:id,pid:state.pid,ts:Date.now(),clips:cl});CLIPS.prune(30).catch(()=>{});
+  try{if(CLOUD.ready){const r=CLOUD.sess.find(x=>x.id===id);if(r){r.clipN=cl.length;cloudWrite(`${cloudBase()}/sessions/${id}`,r)}}
+    else{const l=store.get("pb_sessions_"+state.pid,[]),r=l.find(x=>x.id===id);if(r){r.clipN=cl.length;localStorage.setItem("pb_sessions_"+state.pid,JSON.stringify(l))}}}catch(err){console.error(err)}}
 
 /* --- 4. 결과 --- */
 function renderResult(complete){
@@ -1117,6 +1135,7 @@ function renderResult(complete){
   const Q=state.Q=quality(state.q);
   const[lvl,lvKey]=verdictOf(S,Q);
   $("rLamp").style.background=`var(--${lvKey})`;$("rLevel").textContent=lvl;$("rLevel").style.color=`var(--${lvKey})`;
+  if(state.tm&&state.tm.end){const T=x=>Math.round(x/1000);$("rTime").textContent=`분석 시간 ${T(state.tm.end-state.tm.start)}초 (영상 읽기 ${T((state.tm.scan||state.tm.end)-state.tm.start)}초 · 결과 정리 ${T(state.tm.end-(state.tm.scan||state.tm.end))}초)`}else $("rTime").textContent="";
   $("rSub").textContent=(S.n&&!S.scoredN)?(state.mode==="BATTING"?"이 촬영 각도에서는 판정 지표(몸통 좌우 기울기)를 잴 수 없어요. 앞(투수 쪽)이나 뒤에서 찍어주세요.":"이 촬영 각도에서는 판정 지표를 잴 수 없어요."):(Q.grade==="낮음"&&S.n)?"측정 신뢰도가 낮아 판정을 보류했어요. 아래 수치는 참고만 하세요.":S.n<CFG.minSwings?(S.n?`동작이 ${S.n}회라 판정은 참고용이에요 (최소 ${CFG.minSwings}회 권장)`:"선수 동작을 찾지 못했어요. 선수를 다시 선택하거나 분석 종류를 확인해 보세요."):
     `${state.player} · ${state.mode==="BATTING"?"타격":"투구·송구"} · ${complete?"전체 분석":"일부 구간만 분석"}`;
   renderQuality(Q);
@@ -1760,7 +1779,8 @@ function slowRange(s){
   let h=(y2-y1)*1.15,w=Math.max(h*.75,(x2-x1)*1.15);h=w/.75;if(h>vh){h=vh;w=Math.min(vw,h*.75)}if(w>vw){w=vw;h=Math.min(vh,w/.75)}
   const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h));
   return{a,b,x,y,w,h,PL}}
-function openSlow(s,j){if(!vid.currentSrc)return;const R=slowRange(s);if(!R)return;slowView(Object.assign({V:vid,s,j,live:true},R))}
+async function openSlow(s,j){if(!vid.currentSrc)return;
+  if(state.clipJob){setStatus("느린 영상 저장 마무리 중…","");await state.clipJob}   /* 뒤에서 기록용 영상을 저장하는 중이면 끝난 뒤 연다 */const R=slowRange(s);if(!R)return;slowView(Object.assign({V:vid,s,j,live:true},R))}
 /* 느리게 보기 화면. live=true면 방금 분석한 영상, false면 기록에 저장해 둔 짧은 영상(얼굴은 이미 가려져 있음) */
 function slowView(o){
   const{V,s,j,live,a,b,x,y,w,h,PL}=o,CW=540,CH=Math.round(CW*h/w);
