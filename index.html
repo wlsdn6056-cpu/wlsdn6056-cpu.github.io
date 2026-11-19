@@ -334,6 +334,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <div class="seg"><input type="radio" name="hand" id="h-r" value="R" checked><label for="h-r">오른손</label><input type="radio" name="hand" id="h-l" value="L"><label for="h-l">왼손</label></div>
       </div>
       <label class="switch" id="ballField"><span><b>공을 칠 때만 분석</b><br><span class="muted" style="font-size:.84rem">타격음이나 미트 소리가 없는 연습 스윙은 빼요. 티배팅처럼 공 소리가 없는 영상이면 꺼주세요</span></span><input type="checkbox" id="ballOnly" checked></label>
+      <label class="switch"><span><b>빠른 분석</b><br><span class="muted" style="font-size:.84rem">분석 시간이 20~30% 정도 줄어요. 대신 동작 1~2개의 판정이 일반 분석과 다르게 나올 수 있어요. 정확한 점검이 필요할 땐 꺼주세요</span></span><input type="checkbox" id="fast"></label>
       <label class="switch"><span><b>얼굴 가리기</b><br><span class="muted" style="font-size:.84rem">리포트를 공유할 때 아이들 얼굴을 모자이크해요</span></span><input type="checkbox" id="blur" checked></label>
       <input type="file" id="file" accept="video/*" class="vh">
       <label for="file" class="btn primary big" id="pickBtn">사진첩에서 영상 고르기</label>
@@ -773,6 +774,7 @@ if(saved.mode)document.querySelector(`input[name=mode][value=${saved.mode}]`).ch
 if(saved.hand)document.querySelector(`input[name=hand][value=${saved.hand}]`).checked=true;
 if(saved.blur!=null)$("blur").checked=saved.blur;
 if(saved.ballOnly!=null)$("ballOnly").checked=saved.ballOnly;
+if(saved.fast!=null)$("fast").checked=saved.fast;
 if(saved.dist!=null){const opt=[...$("pDist").options].some(o=>o.value===String(saved.dist));
   if(opt)$("pDist").value=saved.dist;else{$("pDist").value="custom";$("distCustom").value=saved.dist}}
 function syncCustom(){$("distCustomBox").hidden=$("pDist").value!=="custom"}
@@ -782,7 +784,7 @@ function syncDistErr(){$("distErr").hidden=distValue()!=="bad"}
 $("distCustom").addEventListener("input",syncDistErr);$("pDist").addEventListener("change",syncDistErr);
 function syncDist(){const pit=document.querySelector("input[name=mode]:checked").value==="PITCHING";$("distField").hidden=!pit;$("ballField").hidden=pit}
 document.querySelectorAll("input[name=mode]").forEach(r=>r.addEventListener("change",syncDist));syncDist();
-function settings(){return{ballOnly:$("ballOnly").checked,dist:distValue(),player:($("player").value.trim()||"선수1").slice(0,20),mode:document.querySelector("input[name=mode]:checked").value,
+function settings(){return{fast:$("fast").checked,ballOnly:$("ballOnly").checked,dist:distValue(),player:($("player").value.trim()||"선수1").slice(0,20),mode:document.querySelector("input[name=mode]:checked").value,
   hand:document.querySelector("input[name=hand]:checked").value,blur:$("blur").checked}}
 
 /* --- 모델 --- */
@@ -1064,6 +1066,23 @@ async function scan(){
   const isHot=t=>hot.some(([x,y])=>t>=x&&t<=y);let covered=0;
   /* 선택한 선수의 옷 색 특징(상체·하체 색 분포)을 기억해 다른 사람(포수 등)으로 바뀌지 않게 한다 */
   await seekTo(state.pickT);const ref={h:appearance(sel)};
+  /* 빠르게: 장면마다 '건너뛰기(seek)'를 하면 매번 앞쪽 기준 장면부터 다시 풀어야 해서 느리다.
+     대신 영상을 빠르게(1.25~2.5배속, 소리 끔) 재생하다가 다음 분석 시점에 닿으면 잠깐 멈추고 분석한 뒤 이어서 재생한다.
+     멈춘 상태에서 분석하므로 사진·관절선이 그 장면과 정확히 맞고, 분석하는 장면 시점도 같다. 안 되는 기기면 예전 방식으로 */
+  let PS=!!state.fast&&!!vid.requestVideoFrameCallback;   /* '빠른 분석'을 켰을 때만 */
+  const nextFrameAfter=t=>new Promise(res=>{let fin=false;const done=v=>{if(fin)return;fin=true;clearTimeout(to);res(v)};
+    const to=setTimeout(()=>done(null),2500);
+    const cb=(now,md)=>{if(fin)return;if(vid.ended||md.mediaTime>=t-.5/30){vid.pause();done(md.mediaTime)}else vid.requestVideoFrameCallback(cb)};
+    vid.requestVideoFrameCallback(cb);
+    if(vid.paused)vid.play().catch(()=>done(null))});
+  const frameAt=async(t,st)=>{
+    /* 촘촘히 볼 구간(초당 15장)은 1.25배속, 한가한 구간(초당 7.5장)은 2.5배속으로 재생해 분석 시점을 놓치지 않는다 */
+    if(PS){vid.muted=true;vid.playbackRate=st<=step*1.01?1.25:2.5;
+      if(Math.abs(vid.currentTime-t)>1.2||vid.currentTime>t+.05){await seekTo(t);return t}   /* 처음이거나 멀리 떨어졌으면 한 번만 건너뛴다 */
+      const m=await nextFrameAfter(t);
+      if(m!=null&&!vid.ended)return m;
+      PS=false;try{vid.pause()}catch{}}   /* 재생 방식이 안 되면 예전 방식으로 */
+    await seekTo(t);return t};
   for(const[a,b]of segs){
     if(state.cancel)break;
     an.softReset();
@@ -1071,7 +1090,7 @@ async function scan(){
     const anchor={c:center(sel.box),h:sel.box[3]-sel.box[1]};
     for(let t=a,st=step;t<b-1e-3;t+=st){
       if(state.cancel)break;
-      await seekTo(t);
+      t=await frameAt(t,st);if(t>=b)break;
       /* 3초(45장) 넘게 놓치면 마지막 위치 대신 처음 선택한 자리(타석·마운드)에서만 다시 찾는다 */
       const long=lost>45,base=long?anchor:track;
       const size=clamp(base.h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2);
@@ -1105,7 +1124,7 @@ async function scan(){
         await new Promise(r=>setTimeout(r,0));
       }
     }
-    an.flush();
+    an.flush();try{vid.pause();vid.playbackRate=1}catch{}
   }
   try{await wakeLock?.release()}catch{}
   state.tm.scan=performance.now();state.tm.seek=PERF.seek;state.tm.ai=PERF.ai;
@@ -1150,7 +1169,7 @@ function renderResult(complete){
   const Q=state.Q=quality(state.q);
   const[lvl,lvKey]=verdictOf(S,Q);
   $("rLamp").style.background=`var(--${lvKey})`;$("rLevel").textContent=lvl;$("rLevel").style.color=`var(--${lvKey})`;
-  if(state.tm&&state.tm.end){const T=x=>Math.round(x/1000);$("rTime").textContent=`분석 시간 ${T(state.tm.end-state.tm.start)}초 (영상 읽기 ${T((state.tm.scan||state.tm.end)-state.tm.start)}초 [장면 이동 ${T(state.tm.seek||0)} · AI ${T(state.tm.ai||0)}] · 결과 정리 ${T(state.tm.end-(state.tm.scan||state.tm.end))}초)`}else $("rTime").textContent="";
+  if(state.tm&&state.tm.end){const T=x=>Math.round(x/1000);$("rTime").textContent=`${state.fast?"빠른 분석 · ":""}분석 시간 ${T(state.tm.end-state.tm.start)}초 (영상 읽기 ${T((state.tm.scan||state.tm.end)-state.tm.start)}초 [장면 이동 ${T(state.tm.seek||0)} · AI ${T(state.tm.ai||0)}] · 결과 정리 ${T(state.tm.end-(state.tm.scan||state.tm.end))}초)`}else $("rTime").textContent="";
   $("rSub").textContent=(S.n&&!S.scoredN)?(state.mode==="BATTING"?"이 촬영 각도에서는 판정 지표(몸통 좌우 기울기)를 잴 수 없어요. 앞(투수 쪽)이나 뒤에서 찍어주세요.":"이 촬영 각도에서는 판정 지표를 잴 수 없어요."):(Q.grade==="낮음"&&S.n)?"측정 신뢰도가 낮아 판정을 보류했어요. 아래 수치는 참고만 하세요.":S.n<CFG.minSwings?(S.n?`동작이 ${S.n}회라 판정은 참고용이에요 (최소 ${CFG.minSwings}회 권장)`:"선수 동작을 찾지 못했어요. 선수를 다시 선택하거나 분석 종류를 확인해 보세요."):
     `${state.player} · ${state.mode==="BATTING"?"타격":"투구·송구"} · ${complete?"전체 분석":"일부 구간만 분석"}`;
   renderQuality(Q);
