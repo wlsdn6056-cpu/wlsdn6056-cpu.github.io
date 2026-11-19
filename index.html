@@ -334,7 +334,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <div class="seg"><input type="radio" name="hand" id="h-r" value="R" checked><label for="h-r">오른손</label><input type="radio" name="hand" id="h-l" value="L"><label for="h-l">왼손</label></div>
       </div>
       <label class="switch" id="ballField"><span><b>공을 칠 때만 분석</b><br><span class="muted" style="font-size:.84rem">타격음이나 미트 소리가 없는 연습 스윙은 빼요. 티배팅처럼 공 소리가 없는 영상이면 꺼주세요</span></span><input type="checkbox" id="ballOnly" checked></label>
-      <label class="switch"><span><b>빠른 분석</b><br><span class="muted" style="font-size:.84rem">분석 시간이 20~30% 정도 줄어요. 대신 동작 1~2개의 판정이 일반 분석과 다르게 나올 수 있어요. 정확한 점검이 필요할 땐 꺼주세요</span></span><input type="checkbox" id="fast"></label>
+      <label class="switch"><span><b>빠른 분석</b><br><span class="muted" style="font-size:.84rem">분석 장면 수를 줄여 시간이 30% 정도 줄어요. 대신 동작 1~2개의 판정이 일반 분석과 다르게 나올 수 있어요. 정확한 점검이 필요할 땐 꺼주세요</span></span><input type="checkbox" id="fast"></label>
       <label class="switch"><span><b>얼굴 가리기</b><br><span class="muted" style="font-size:.84rem">리포트를 공유할 때 아이들 얼굴을 모자이크해요</span></span><input type="checkbox" id="blur" checked></label>
       <input type="file" id="file" accept="video/*" class="vh">
       <label for="file" class="btn primary big" id="pickBtn">사진첩에서 영상 고르기</label>
@@ -1054,7 +1054,7 @@ async function scan(){
     try{state.O=onsetEnvelope(await decodeAudio(state.file))}catch(e){console.error(e);state.audioErr=true}
     if(state.mode==="BATTING"&&state.O){an.hints=contactTimes(state.O,vid.duration);an.requireBall=state.ballOnly}
   }
-  const dur=vid.duration,step=1/CFG.scanHz,t0=state.pickT;
+  const dur=vid.duration,step=1/(state.fast?10:CFG.scanHz),t0=state.pickT,LK=Math.round(3/step),LF=Math.round(1/step);   /* 빠른 분석: 움직일 때 초당 10장, 가만히 있을 때 5장 (일반은 15장·7.5장) */
   const segs=[[t0,dur],[0,t0]];
   const total=Math.max(1,Math.ceil(dur/step));let done=0;const started=performance.now();state.tm={start:started};PERF.seek=0;PERF.ai=0;
   const can=$("scanCan");
@@ -1069,7 +1069,7 @@ async function scan(){
   /* 빠르게: 장면마다 '건너뛰기(seek)'를 하면 매번 앞쪽 기준 장면부터 다시 풀어야 해서 느리다.
      대신 영상을 빠르게(1.25~2.5배속, 소리 끔) 재생하다가 다음 분석 시점에 닿으면 잠깐 멈추고 분석한 뒤 이어서 재생한다.
      멈춘 상태에서 분석하므로 사진·관절선이 그 장면과 정확히 맞고, 분석하는 장면 시점도 같다. 안 되는 기기면 예전 방식으로 */
-  let PS=!!state.fast&&!!vid.requestVideoFrameCallback;   /* '빠른 분석'을 켰을 때만 */
+  let PS=false;   /* 재생하며 분석하는 방식은 아이폰에서 동작을 많이 놓쳐 쓰지 않는다 (빠른 분석은 분석 장면 수를 줄이는 방식) */
   const nextFrameAfter=t=>new Promise(res=>{let fin=false;const done=v=>{if(fin)return;fin=true;clearTimeout(to);res(v)};
     const to=setTimeout(()=>done(null),2500);
     const cb=(now,md)=>{if(fin)return;if(vid.ended||md.mediaTime>=t-.5/30){vid.pause();done(md.mediaTime)}else vid.requestVideoFrameCallback(cb)};
@@ -1092,14 +1092,14 @@ async function scan(){
       if(state.cancel)break;
       t=await frameAt(t,st);if(t>=b)break;
       /* 3초(45장) 넘게 놓치면 마지막 위치 대신 처음 선택한 자리(타석·마운드)에서만 다시 찾는다 */
-      const long=lost>45,base=long?anchor:track;
+      const long=lost>LK,base=long?anchor:track;
       const size=clamp(base.h*2.4,96,Math.min(vid.videoWidth,vid.videoHeight)*1.2);
       /* 선수가 작게 찍히면(키가 화면의 15% 미만) AI 입력을 키워 관절을 더 또렷하게 본다 */
       const cands=await detectCrop(base.c[0],base.c[1],size,base.h<.15*Math.max(vid.videoWidth,vid.videoHeight)?320:256);
       let p=pickSame(cands,base,ref,.45,long?.75:.5);
       if(!p){lost++;
         /* 놓쳤을 때: 마지막 위치나 처음 선택한 위치 근처에서, 옷 색이 같은 사람만 다시 잡는다. 확신이 없으면 그 구간은 건너뛴다 */
-        if(lost%15===0){const all=await detectFull();p=(!long&&pickSame(all,track,ref,.5,.75))||pickSame(all,anchor,ref,.5,.75)}}
+        if(lost%LF===0){const all=await detectFull();p=(!long&&pickSame(all,track,ref,.5,.75))||pickSame(all,anchor,ref,.5,.75)}}
       if(window.__trk)window.__trk.push({t:+t.toFixed(2),p:p?[Math.round(center(p.box)[0]),Math.round(p.box[3]-p.box[1]),+(p._sim??-1).toFixed(3)]:null,
         others:cands.filter(c=>c!==p).map(c=>[Math.round(center(c.box)[0]),+(c._sim??(ref?histSim(ref.h,appearance(c)):-1)).toFixed(3)])});
       let res=null;
