@@ -375,7 +375,7 @@ body{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
         <div class="lamp" id="rLamp"></div>
         <div class="lv" id="rLevel">-</div>
         <div class="muted" id="rSub" style="font-size:.88rem">-</div>
-        <div class="muted" id="rTime" style="font-size:.72rem;margin-top:4px"></div>
+        <div class="muted" id="rTime" style="font-size:.72rem;margin-top:4px;grid-column:1/-1"></div>
       </div>
       <div class="stats">
         <div class="stat"><div class="k">감지된 동작</div><div class="v" id="rN">0</div></div>
@@ -791,7 +791,7 @@ async function loadModel(){
     try{await tf.setBackend("webgl")}catch{await tf.setBackend("cpu")}
     await tf.ready();
     model=await tf.loadGraphModel("model/model.json");
-    const z=tf.zeros([1,256,256,3],"int32");const o=model.execute(z);o.dispose();z.dispose();
+    for(const S of[256,320]){const z=tf.zeros([1,S,S,3],"int32");const o=model.execute(z);o.dataSync();o.dispose();z.dispose()}
     setStatus("AI 준비됨","ok");
   }catch(e){console.error(e);setStatus("AI 불러오기 실패","err");
     $("homeErr").hidden=false;$("homeErr").textContent="AI 모델을 불러오지 못했어요. 인터넷 연결을 확인하고 페이지를 새로고침해 주세요.";}
@@ -833,8 +833,8 @@ const inCan=document.createElement("canvas"),inCtx=inCan.getContext("2d",{willRe
 const PERF={seek:0,ai:0};   /* 단계별 시간 재기 (결과 화면에 표시) */
 async function infer(){
   const t0=performance.now();
-  const out=tf.tidy(()=>model.execute(tf.expandDims(tf.cast(tf.browser.fromPixels(inCan),"int32"),0)));
-  const a=await out.array();out.dispose();PERF.ai+=performance.now()-t0;return a[0];
+  const out=tf.tidy(()=>model.execute(tf.expandDims(tf.browser.fromPixels(inCan),0)));
+  const a=out.arraySync();out.dispose();PERF.ai+=performance.now()-t0;return a[0];
 }
 function people(rows,map){return rows.filter(r=>r[55]>0.2).map(r=>decodeRow(r,map))}
 /* 그물망 뒤 선수는 큰 해상도에서 격자가 또렷해져 오히려 못 찾는다.
@@ -907,12 +907,24 @@ function poseSane(kp,box,Tref){
   const ex=.2*Math.max(bw,bh);for(let i=0;i<17;i++)if(ok(i)&&(kp[i][0]<box[0]-ex||kp[i][0]>box[2]+ex||kp[i][1]<box[1]-ex||kp[i][1]>box[3]+ex))return false;
   return true;
 }
-function makeThumb(box,kp,valid,blur,hot){
+/* 결과 정리 단계의 사진(단계별 사진·대표 장면)은 판정에 쓰이지 않으므로, 빈 칸을 먼저 만들고 결과 화면을 띄운 뒤 시간 순서대로 채운다 */
+const THQ=[];let thId=0;
+function lazyThumb(t,box,kp,valid,blur,hot){const c=document.createElement("canvas");c.width=300;c.height=400;const x=c.getContext("2d");x.fillStyle="#0B1118";x.fillRect(0,0,300,400);
+  c._th=++thId;THQ.push({c,t,a:[box,kp,valid,blur,hot]});return c}
+async function runThumbs(an,rid){const L=THQ.splice(0).sort((a,b)=>a.t-b.t);if(!L.length)return;
+  for(const j of L){if(state.an!==an)return;
+    try{await seekTo(j.t);makeThumb(...j.a,j.c);const u=j.c.toDataURL("image/jpeg",.8);document.querySelectorAll(`img[data-th="${j.c._th}"]`).forEach(i=>i.src=u)}catch(err){console.error(err)}}
+  if(state.an!==an||!state.S)return;
+  try{state.reportCanvas=makeReport(state.S,state.complete);$("rImg").src=state.reportCanvas.toDataURL("image/jpeg",.9);if(rid)updateRecImg(rid)}catch(err){console.error(err)}}
+function updateRecImg(id){let img;try{const c=document.createElement("canvas");c.width=540;c.height=750;c.getContext("2d").drawImage(state.reportCanvas,0,0,540,750);img=c.toDataURL("image/jpeg",.72)}catch{return}
+  if(CLOUD.ready){const r=CLOUD.sess.find(x=>x.id===id);if(r){r.img=img;cloudWrite(`${cloudBase()}/sessions/${id}`,r)}return}
+  const l=store.get("pb_sessions_"+state.pid,[]),r=l.find(x=>x.id===id);if(r){r.img=img;try{localStorage.setItem("pb_sessions_"+state.pid,JSON.stringify(l))}catch{}}}
+function makeThumb(box,kp,valid,blur,hot,into){
   const bw=box[2]-box[0],bh=box[3]-box[1],vw=vid.videoWidth,vh=vid.videoHeight;
   let h=bh*1.25,w=h*.75,cx=(box[0]+box[2])/2,cy=(box[1]+box[3])/2;
   w=Math.max(w,bw*1.3);h=w/.75;
   const x=clamp(cx-w/2,0,Math.max(0,vw-w)),y=clamp(cy-h/2,0,Math.max(0,vh-h));
-  const c=document.createElement("canvas");c.width=300;c.height=400;const ctx=c.getContext("2d");
+  const c=into||document.createElement("canvas");c.width=300;c.height=400;const ctx=c.getContext("2d");
   ctx.fillStyle="#0B1118";ctx.fillRect(0,0,300,400);
   const k=300/w;ctx.drawImage(vid,x,y,w,h,0,0,300,h*k);
   const sk=kp.map(p=>[(p[0]-x),(p[1]-y)]);
@@ -1044,7 +1056,7 @@ async function scan(){
   const segs=[[t0,dur],[0,t0]];
   const total=Math.max(1,Math.ceil(dur/step));let done=0;const started=performance.now();state.tm={start:started};PERF.seek=0;PERF.ai=0;
   const can=$("scanCan");
-  const q={samples:0,tracked:0,conf:[],h:[],oblique:0,views:0};state.q=q;state.trackLog=[];state.poseLog=[];state.throws=[];
+  const q={samples:0,tracked:0,conf:[],h:[],oblique:0,views:0};state.q=q;state.trackLog=[];state.poseLog=[];state.throws=[];THQ.length=0;
   /* 빠르게: 가만히 있는 구간은 초당 7.5장, 움직임·타격음·글러브 소리 근처는 초당 15장으로 촘촘하게 */
   const hot=[];
   if(state.mode==="BATTING"&&an.hints)an.hints.forEach(h=>hot.push([h-.7,h+.35]));
@@ -1119,10 +1131,11 @@ async function scan(){
   const complete=!state.cancel;state.cancel=false;
   state.tm.end=performance.now();
   renderResult(complete);
+  const thJob=runThumbs(an,complete&&state.S&&state.S.n?state.lastRecId:null);state.thumbJob=thJob.finally(()=>{if(state.thumbJob===thJob)state.thumbJob=null});state.thumbJob=thJob;
   /* 기록용 느린 영상은 결과를 먼저 보여준 뒤 뒤에서 저장한다 (기다리는 시간 줄이기) */
   if(wantClips&&complete)state.clipJob=(async()=>{const prev=$("status").lastElementChild.textContent,pc=$("status").className.replace("chip ","");
     setStatus("느린 영상 저장 중","");
-    try{const cl=await recordClips(an);if(cl&&state.an===an&&state.lastRecId)await attachClips(cl)}catch(err){console.error(err)}
+    try{await thJob;const cl=await recordClips(an);if(cl&&state.an===an&&state.lastRecId)await attachClips(cl)}catch(err){console.error(err)}
     finally{state.clipJob=null;setStatus(prev,pc)}})();
 }
 async function attachClips(cl){
@@ -1190,9 +1203,9 @@ function renderResult(complete){
   const g=$("rSwings");g.innerHTML="";
   if(!an.swings.length)g.innerHTML=`<p class="muted" style="grid-column:1/-1">감지된 동작이 없어요.</p>`;
   an.swings.forEach(s=>{const[lv,k]=swingLevel(s);const d=document.createElement("div");d.className="sw";d.id="sw"+s.n;
-    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}${s.snap&&(s.snap.headMove!=null||s.snap.ftDone!=null)?`<span class="muted" style="font-size:.76rem">${[s.snap.headMove!=null?`머리 이동 ${Math.round(s.snap.headMove*100)}%`:"",s.snap.ftDone!=null?(s.snap.ftDone?"팔로스루 완성":"팔로스루 짧음"):""].filter(Boolean).join(" · ")}</span>`:""}${s.preJudge?`<span class="muted" style="font-size:.74rem">공 놓기 직전 장면으로 판정</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
+    d.innerHTML=`${s.thumb?`<img alt="동작 ${s.n} 장면" data-th="${s.thumb._th||""}" src="${s.thumb.toDataURL("image/jpeg",.8)}">`:""}<div class="meta"><div class="row"><b class="num">#${s.n} · ${fmt1(s.peakT)}</b><span class="pill" style="background:var(--${k})">${lv}</span></div><span class="muted">${s.flags.map(f=>COMP_LABEL[f]).join(", ")||"주의 항목 없음"}</span>${s.kmh?`<span class="num" style="font-weight:600">구속 약 ${Math.round(s.kmh)}km/h</span>`:""}${s.snap&&s.snap.abd!=null?`<span class="muted" style="font-size:.76rem">어깨 각도 ${Math.round(s.snap.abd)}°</span>`:""}${s.snap&&(s.snap.headMove!=null||s.snap.ftDone!=null)?`<span class="muted" style="font-size:.76rem">${[s.snap.headMove!=null?`머리 이동 ${Math.round(s.snap.headMove*100)}%`:"",s.snap.ftDone!=null?(s.snap.ftDone?"팔로스루 완성":"팔로스루 짧음"):""].filter(Boolean).join(" · ")}</span>`:""}${s.preJudge?`<span class="muted" style="font-size:.74rem">공 놓기 직전 장면으로 판정</span>`:""}<span class="muted" style="font-size:.74rem">측정 신뢰도 ${swingQ(s)}</span>${s.phases&&s.phases.some(p=>p.thumb)?`<button type="button" class="phbtn">단계별 사진 보기 ▾</button>`:""}</div>`;
     if(s.phases&&s.phases.some(p=>p.thumb)){const ph=document.createElement("div");ph.className="ph";
-      ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
+      ph.innerHTML=s.phases.map(p=>`<figure>${p.thumb?`<img alt="${p.l}" data-th="${p.thumb._th||""}" src="${p.thumb.toDataURL("image/jpeg",.75)}">`:`<div class="none">장면을<br>못 찾음</div>`}<figcaption>${p.l}</figcaption></figure>`).join("");
       d.insertBefore(ph,d.querySelector(".meta"));
       ph.querySelectorAll("figure").forEach((f,j)=>{if(s.phases[j].t!=null&&vid.currentSrc){f.classList.add("play");f.onclick=()=>openSlow(s,j)}});
       const bt=d.querySelector(".phbtn");bt.onclick=()=>{const o=d.classList.toggle("open");bt.textContent=o?"단계별 사진 접기 ▴":"단계별 사진 보기 ▾"}}
@@ -1363,6 +1376,7 @@ async function doSave(kind,btn){
   if(!dl){setHint("파일을 저장하지 못했어요. '카톡용 요약 글 복사'를 써주세요.","bad");return}
   if(kind==="pdf"&&!window.jspdf){setHint("PDF 도구를 불러오지 못했어요. 페이지를 새로고침해 주세요.","bad");return}
   const old=btn.textContent;btn.disabled=true;btn.textContent="만드는 중…";
+  if(state.thumbJob)try{await state.thumbJob}catch{}
   try{
     await new Promise(r=>setTimeout(r,30));
     const base=`PlayBall_${state.player}_${modeKr().replace("·","")}_${ymd()}`;
@@ -1662,7 +1676,7 @@ async function resnapAtRelease(an){
       const sv={elbow_drop:severity(sn.elbowH,...LIMITS.elbow_drop)};
       s.snap=sn;s.snapT=q.t;s.badPose=false;s.preJudge=true;s.thS=th;
       const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(f=>sv[f]>=.5);
-      try{await seekTo(q.t);const im=makeThumb(q.box,k,k.map(p=>p[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,null));if(im)s.thumb=im}catch(err){console.error(err)}
+      try{const im=lazyThumb(q.t,q.box,k,k.map(p=>p[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,null));if(im)s.thumb=im}catch(err){console.error(err)}
       return true}
     return false};
   for(const s of an.swings){
@@ -1676,7 +1690,7 @@ async function resnapAtRelease(an){
         if(await preJudge(s,s.relBest[0]))continue;
         let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.relBest[0]);if(dd<bd){bd=dd;q=e2}}
         s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.flags=[];
-        if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
+        if(q){s.snapT=q.t;try{const th=lazyThumb(q.t,q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
         continue}}
     if(rel==null){const P=PL.filter(e=>e.t>=s.peakT-.4&&e.t<=s.peakT+.05&&e.kp[hs.wr][2]>.3&&e.kp[hs.sh][2]>.3&&e.kp[hs.wr][1]<e.kp[hs.sh][1]);
       if(P.length)rel=P.reduce((a,b)=>b.kp[hs.wr][1]<a.kp[hs.wr][1]?b:a).t}
@@ -1684,7 +1698,7 @@ async function resnapAtRelease(an){
       if((s.sN||0)<.5*(s.wN||1)&&await preJudge(s,s.peakT))continue;   /* 선수가 작게 찍힌 경우는 직전 장면도 흐려서 판정하지 않는다 */
       let q=null,bd=9;for(const e2 of PL){const dd=Math.abs(e2.t-s.peakT);if(dd<bd){bd=dd;q=e2}}
       s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.badPose=true;s.smallArm=true;s.flags=[];
-      if(q){s.snapT=q.t;try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
+      if(q){s.snapT=q.t;try{const th=lazyThumb(q.t,q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}}
       continue}
     if(rel==null)continue;
     if(Tref===undefined){const ts=PL.filter(q=>[5,6,11,12].every(i=>q.kp[i][2]>=CFG.kpConf)).map(q=>Math.hypot((q.kp[5][0]+q.kp[6][0])/2-(q.kp[11][0]+q.kp[12][0])/2,(q.kp[5][1]+q.kp[6][1])/2-(q.kp[11][1]+q.kp[12][1])/2));Tref=ts.length>=10?pct(ts,75):null}
@@ -1692,7 +1706,7 @@ async function resnapAtRelease(an){
     let e=near.find(q=>poseSane(q.kp,q.box,Tref));
     if(!e&&await preJudge(s,rel))continue;
     if(!e){const q=near[0];s.snap=Object.assign(s.snap||{},{elbowH:null,tilt:null,knee:null,elbow:null});s.snapT=q.t;s.badPose=true;s.flags=[];
-      try{await seekTo(q.t);const th=makeThumb(q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
+      try{const th=lazyThumb(q.t,q.box,q.kp,q.kp.map(()=>false),state.blur);if(th)s.thumb=th}catch(err){console.error(err)}
       continue}
     const kp=e.kp,ok=(...ids)=>ids.every(i=>kp[i][2]>=CFG.kpConf);if(!ok(5,6,11,12))continue;
     const ms=[(kp[5][0]+kp[6][0])/2,(kp[5][1]+kp[6][1])/2],mh=[(kp[11][0]+kp[12][0])/2,(kp[11][1]+kp[12][1])/2],torso=Math.hypot(ms[0]-mh[0],ms[1]-mh[1]);if(torso<6)continue;
@@ -1712,7 +1726,7 @@ async function resnapAtRelease(an){
     if(sn.elbowH!=null)sv.elbow_drop=severity(sn.elbowH,...LIMITS.elbow_drop);
     const sm=s.sideOK?s.ext.stride_max:null;if(sm!=null)sv.stride=Math.max(severity(sm,...LIMITS.stride_low),severity(sm,...LIMITS.stride_high));
     const[sc]=an.score(sv);if(sc!=null)s.scoreMax=sc;s.flags=Object.keys(sv).filter(k=>sv[k]>=.5).sort();
-    try{await seekTo(e.t);const im=makeThumb(e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,tl));if(im)s.thumb=im}catch(err){console.error(err)}
+    try{const im=lazyThumb(e.t,e.box,kp,kp.map(q=>q[2]>=CFG.kpConf),state.blur,hotEdges(sv,th,tl));if(im)s.thumb=im}catch(err){console.error(err)}
   }
 }
 /* 투구 단계별 장면: 균형점(앞무릎 최고점) → 앞발 착지 → 공 놓기 → 팔로스루.
@@ -1741,7 +1755,7 @@ async function makePhases(an){
       for(const[l,q]of[["준비 자세",st],["스트라이드",sd],["콘택트","c"],["팔로스루",ft]]){
         if(q==="c"){s.phases.push({l,t:tc,thumb:s.thumb||null});continue}
         if(!q){s.phases.push({l,thumb:null});continue}
-        try{await seekTo(q.t);s.phases.push({l,t:q.t,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
+        try{s.phases.push({l,t:q.t,thumb:lazyThumb(q.t,q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
       continue}
     const rel=s.snapT;if(rel==null)continue;
     let kh=null,kv=-9,leg=null;
@@ -1767,7 +1781,7 @@ async function makePhases(an){
     for(const[l,q]of[["균형점",kh],["앞발 착지",fc],["공 놓기","rel"],["팔로스루",ft]]){
       if(q==="rel"){s.phases.push({l,t:rel,thumb:s.thumb||null});continue}
       if(!q){s.phases.push({l,thumb:null});continue}
-      try{await seekTo(q.t);s.phases.push({l,t:q.t,thumb:makeThumb(q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
+      try{s.phases.push({l,t:q.t,thumb:lazyThumb(q.t,q.box,q.kp,q.kp.map(p=>p[2]>=CFG.kpConf),state.blur)})}catch(err){console.error(err);s.phases.push({l,thumb:null})}}
   }
 }
 /* 단계별 사진을 누르면 그 동작 구간만 느리게 반복 재생 (선수 주변을 크게 잘라서, 얼굴 가리기 유지) */
@@ -1782,7 +1796,7 @@ function slowRange(s){
   const x=clamp((x1+x2)/2-w/2,0,Math.max(0,vw-w)),y=clamp((y1+y2)/2-h/2,0,Math.max(0,vh-h));
   return{a,b,x,y,w,h,PL}}
 async function openSlow(s,j){if(!vid.currentSrc)return;
-  if(state.clipJob){setStatus("느린 영상 저장 마무리 중…","");await state.clipJob}   /* 뒤에서 기록용 영상을 저장하는 중이면 끝난 뒤 연다 */const R=slowRange(s);if(!R)return;slowView(Object.assign({V:vid,s,j,live:true},R))}
+  if(state.thumbJob)await state.thumbJob;if(state.clipJob){setStatus("느린 영상 저장 마무리 중…","");await state.clipJob}   /* 뒤에서 기록용 영상을 저장하는 중이면 끝난 뒤 연다 */const R=slowRange(s);if(!R)return;slowView(Object.assign({V:vid,s,j,live:true},R))}
 /* 느리게 보기 화면. live=true면 방금 분석한 영상, false면 기록에 저장해 둔 짧은 영상(얼굴은 이미 가려져 있음) */
 function slowView(o){
   const{V,s,j,live,a,b,x,y,w,h,PL}=o,CW=540,CH=Math.round(CW*h/w);
